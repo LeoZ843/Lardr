@@ -1,0 +1,170 @@
+# Lardr - Android Project .gitignore
+
+# ============================================
+# CRITICAL: API Keys & Secrets
+# ============================================
+google-services.json
+app/google-services.json
+**/secrets.properties
+**/api_keys.properties
+**/local.properties
+local.properties
+*.jks
+*.keystore
+keystore.properties
+release/
+.env
+.env.local
+
+# ============================================
+# Built Application Files
+# ============================================
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# ============================================
+# Gradle Files
+# ============================================
+.gradle/
+build/
+*/build/
+**/build/
+gradle-app.setting
+!gradle-wrapper.jar
+
+# ============================================
+# Android Studio / IntelliJ IDEA
+# ============================================
+*.iml
+.idea/
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/gradle.xml
+.idea/assetWizardSettings.xml
+.idea/dictionaries
+.idea/libraries
+.idea/shelf
+.idea/caches
+.idea/modules.xml
+.idea/.name
+.idea/compiler.xml
+.idea/copyright/profiles_settings.xml
+.idea/encodings.xml
+.idea/misc.xml
+.idea/scopes/scope_settings.xml
+.idea/vcs.xml
+.idea/jsLibraryMappings.xml
+.idea/datasources.xml
+.idea/dataSources.ids
+.idea/sqlDataSources.xml
+.idea/dynamic.xml
+.idea/uiDesigner.xml
+.idea/jarRepositories.xml
+captures/
+.externalNativeBuild
+.cxx/
+obj/
+
+# ============================================
+# Log Files
+# ============================================
+*.log
+
+# ============================================
+# Operating System Files
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*~
+.directory
+
+# ============================================
+# Version Control
+# ============================================
+.svn/
+.hg/
+.bzr/
+
+# ============================================
+# Other IDEs
+# ============================================
+.classpath
+.project
+.settings/
+bin/
+gen/
+out/
+.vscode/
+
+# ============================================
+# Testing
+# ============================================
+/test-results/
+/androidTest-results/
+/test-output/
+
+# ============================================
+# Lint
+# ============================================
+lint/
+lint-results.html
+lint-results.xml
+
+# ============================================
+# Profiler
+# ============================================
+*.hprof
+
+# ============================================
+# Firebase / Google Services
+# ============================================
+GoogleService-Info.plist
+firebase-debug.log
+firestore-debug.log
+pubsub-debug.log
+database-debug.log
+ui-debug.log
+
+# ============================================
+# Generated Files
+# ============================================
+**/R.java
+**/BuildConfig.java
+**/AndroidManifest.xml.orig
+**/navigation/**/**.json
+
+# ============================================
+# Backup Files
+# ============================================
+*.bak
+*.tmp
+*.temp
+
+# ============================================
+# Miscellaneous
+# ============================================
+*.swp
+*.swo
+.navigation/
+freeline.py
+freeline/
+freeline_project_description.json
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+fastlane/readme.md
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
