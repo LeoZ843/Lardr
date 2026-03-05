@@ -3,17 +3,17 @@ package com.zanoni.lardr.ui.screens.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zanoni.lardr.data.model.Store
+import com.zanoni.lardr.data.model.StoreInvite
+import com.zanoni.lardr.data.model.User
 import com.zanoni.lardr.data.repository.AuthRepository
 import com.zanoni.lardr.data.repository.StoreRepository
+import com.zanoni.lardr.data.repository.UserRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import com.zanoni.lardr.data.model.StoreInvite
-import com.zanoni.lardr.data.repository.UserRepository
-import com.zanoni.lardr.data.model.User
 
 data class HomeUiState(
     val stores: List<Store> = emptyList(),
@@ -21,7 +21,8 @@ data class HomeUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val isOfflineMode: Boolean = false,
-    val storeInvites: List<StoreInvite> = emptyList()
+    val storeInvites: List<StoreInvite> = emptyList(),
+    val sentStoreInvites: List<StoreInvite> = emptyList()
 )
 
 @HiltViewModel
@@ -37,7 +38,8 @@ class HomeViewModel @Inject constructor(
     init {
         loadStores()
         checkOfflineMode()
-        loadStoreInvites()
+        loadReceivedStoreInvites()
+        loadSentStoreInvites()
         loadFriends()
     }
 
@@ -49,24 +51,29 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun loadStoreInvites() {
+    private fun loadReceivedStoreInvites() {
         viewModelScope.launch {
-            val userId = authRepository.getCurrentUserId()
-            if (userId != null) {
-                userRepository.getPendingStoreInvites(userId).collect { invites ->
-                    _uiState.value = _uiState.value.copy(storeInvites = invites)
-                }
+            val userId = authRepository.getCurrentUserId() ?: return@launch
+            userRepository.getPendingStoreInvites(userId).collect { invites ->
+                _uiState.value = _uiState.value.copy(storeInvites = invites)
+            }
+        }
+    }
+
+    private fun loadSentStoreInvites() {
+        viewModelScope.launch {
+            val userId = authRepository.getCurrentUserId() ?: return@launch
+            userRepository.getSentStoreInvites(userId).collect { invites ->
+                _uiState.value = _uiState.value.copy(sentStoreInvites = invites)
             }
         }
     }
 
     private fun loadFriends() {
         viewModelScope.launch {
-            val userId = authRepository.getCurrentUserId()
-            if (userId != null) {
-                userRepository.observeFriends(userId).collect { friends ->
-                    _uiState.value = _uiState.value.copy(friends = friends)
-                }
+            val userId = authRepository.getCurrentUserId() ?: return@launch
+            userRepository.observeFriends(userId).collect { friends ->
+                _uiState.value = _uiState.value.copy(friends = friends)
             }
         }
     }
@@ -74,7 +81,6 @@ class HomeViewModel @Inject constructor(
     fun shareStore(storeId: String, friendIds: List<String>) {
         viewModelScope.launch {
             val store = _uiState.value.stores.find { it.id == storeId } ?: return@launch
-
             friendIds.forEach { friendId ->
                 userRepository.sendStoreInvite(
                     storeId = store.id,
@@ -86,12 +92,18 @@ class HomeViewModel @Inject constructor(
     }
 
     fun acceptStoreInvite(inviteId: String) {
+        _uiState.value = _uiState.value.copy(
+            storeInvites = _uiState.value.storeInvites.filter { it.id != inviteId }
+        )
         viewModelScope.launch {
             userRepository.acceptStoreInvite(inviteId)
         }
     }
 
     fun declineStoreInvite(inviteId: String) {
+        _uiState.value = _uiState.value.copy(
+            storeInvites = _uiState.value.storeInvites.filter { it.id != inviteId }
+        )
         viewModelScope.launch {
             userRepository.declineStoreInvite(inviteId)
         }
@@ -100,7 +112,6 @@ class HomeViewModel @Inject constructor(
     private fun loadStores() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
-
             val userId = authRepository.getCurrentUserId()
             if (userId != null) {
                 storeRepository.getStoresForUser(userId).collect { stores ->
@@ -111,37 +122,32 @@ class HomeViewModel @Inject constructor(
                     )
                 }
             } else {
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = "Not logged in"
-                )
+                _uiState.value = _uiState.value.copy(isLoading = false, error = "Not logged in")
             }
         }
     }
 
     fun createStore(name: String) {
         if (name.isBlank()) return
-
         viewModelScope.launch {
             val userId = authRepository.getCurrentUserId() ?: return@launch
-
             storeRepository.createStore(name, userId)
         }
     }
 
     fun deleteStore(storeId: String) {
-        viewModelScope.launch {
-            storeRepository.deleteStore(storeId)
-        }
+        viewModelScope.launch { storeRepository.deleteStore(storeId) }
     }
 
     fun updateStoreName(storeId: String, newName: String) {
         if (newName.isBlank()) return
-
-        viewModelScope.launch {
-            storeRepository.updateStoreName(storeId, newName)
-        }
+        viewModelScope.launch { storeRepository.updateStoreName(storeId, newName) }
     }
+
+    fun getPendingInviteUserIdsForStore(storeId: String): List<String> =
+        _uiState.value.sentStoreInvites
+            .filter { it.storeId == storeId }
+            .map { it.invitedUserId }
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)

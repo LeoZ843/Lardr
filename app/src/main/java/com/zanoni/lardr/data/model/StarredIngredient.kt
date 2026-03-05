@@ -5,6 +5,6 @@ data class StarredIngredient(
     val name: String = "",
     val periodicity: Int? = null,
     val defaultQuantity: String = "",
-    val conflictStrategy: ConflictStrategy = ConflictStrategy.ASK,
+    val conflictStrategy: String = ConflictStrategy.ASK.name,
     val lastAddedWeek: Int? = null
 )

@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,16 +24,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.zanoni.lardr.data.model.StoreInviteStatus
 import com.zanoni.lardr.data.model.User
 
 @Composable
 fun ShareStoreDialog(
     storeName: String,
     friends: List<User>,
+    existingMemberIds: List<String> = emptyList(),
+    pendingInviteUserIds: List<String> = emptyList(),
     onDismiss: () -> Unit,
     onConfirm: (List<String>) -> Unit,
     onNavigateToFriends: () -> Unit
 ) {
+    val selectableFriends = friends.filter { friend ->
+        !existingMemberIds.contains(friend.id) && !pendingInviteUserIds.contains(friend.id)
+    }
     val selectedFriendIds = remember { mutableStateListOf<String>() }
 
     AlertDialog(
@@ -45,20 +51,14 @@ fun ShareStoreDialog(
             )
         },
         text = {
-            Column(
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 if (friends.isEmpty()) {
                     Text(
                         text = "You don't have any friends yet.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(onClick = {
-                        onDismiss()
-                        onNavigateToFriends()
-                    }) {
+                    TextButton(onClick = { onDismiss(); onNavigateToFriends() }) {
                         Text("Add friends")
                     }
                 } else {
@@ -71,18 +71,22 @@ fun ShareStoreDialog(
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(300.dp)
+                            .heightIn(max = 320.dp)
                     ) {
                         items(friends) { friend ->
-                            FriendCheckboxItem(
+                            val isMember = existingMemberIds.contains(friend.id)
+                            val isPending = pendingInviteUserIds.contains(friend.id)
+                            val isSelectable = !isMember && !isPending
+
+                            FriendInviteItem(
                                 friend = friend,
                                 isSelected = selectedFriendIds.contains(friend.id),
-                                onSelectionChange = { isSelected ->
-                                    if (isSelected) {
-                                        selectedFriendIds.add(friend.id)
-                                    } else {
-                                        selectedFriendIds.remove(friend.id)
-                                    }
+                                isMember = isMember,
+                                isPending = isPending,
+                                onSelectionChange = { selected ->
+                                    if (!isSelectable) return@FriendInviteItem
+                                    if (selected) selectedFriendIds.add(friend.id)
+                                    else selectedFriendIds.remove(friend.id)
                                 }
                             )
                             if (friend != friends.last()) {
@@ -91,13 +95,8 @@ fun ShareStoreDialog(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
                     TextButton(
-                        onClick = {
-                            onDismiss()
-                            onNavigateToFriends()
-                        },
+                        onClick = { onDismiss(); onNavigateToFriends() },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Missing someone? Add friends")
@@ -113,7 +112,10 @@ fun ShareStoreDialog(
                 },
                 enabled = selectedFriendIds.isNotEmpty()
             ) {
-                Text(if (selectedFriendIds.size == 1) "Send invite" else "Send ${selectedFriendIds.size} invites")
+                Text(
+                    if (selectedFriendIds.size == 1) "Send invite"
+                    else "Send ${selectedFriendIds.size} invites"
+                )
             }
         },
         dismissButton = {
@@ -125,15 +127,19 @@ fun ShareStoreDialog(
 }
 
 @Composable
-private fun FriendCheckboxItem(
+private fun FriendInviteItem(
     friend: User,
     isSelected: Boolean,
+    isMember: Boolean,
+    isPending: Boolean,
     onSelectionChange: (Boolean) -> Unit
 ) {
+    val isSelectable = !isMember && !isPending
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onSelectionChange(!isSelected) }
+            .clickable(enabled = isSelectable) { onSelectionChange(!isSelected) }
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -142,18 +148,33 @@ private fun FriendCheckboxItem(
             Text(
                 text = friend.username,
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                color = if (isSelectable) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 text = friend.email,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            when {
+                isMember -> Text(
+                    text = "Already a member",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                isPending -> Text(
+                    text = "Invite pending",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
         }
 
         Checkbox(
             checked = isSelected,
-            onCheckedChange = onSelectionChange
+            onCheckedChange = if (isSelectable) onSelectionChange else null,
+            enabled = isSelectable
         )
     }
 }

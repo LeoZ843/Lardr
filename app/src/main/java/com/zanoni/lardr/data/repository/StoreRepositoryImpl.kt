@@ -309,7 +309,7 @@ class StoreRepositoryImpl @Inject constructor(
 
                     if (existingIngredient != null) {
                         val strategy = conflictResolution[recipeIngredient.name]
-                            ?: recipe.conflictStrategy
+                            ?: recipe.conflictStrategy?.let { ConflictStrategy.valueOf(it) }
                             ?: ConflictStrategy.ASK
 
                         when (strategy) {
@@ -432,7 +432,7 @@ class StoreRepositoryImpl @Inject constructor(
                 .filter { starred ->
                     starred.periodicity != null &&
                             (starred.lastAddedWeek == null || currentWeek - starred.lastAddedWeek >= starred.periodicity) &&
-                            starred.conflictStrategy == ConflictStrategy.ASK
+                            starred.conflictStrategy == ConflictStrategy.ASK.name
                 }
                 .forEach { starred ->
                     val existing = store.shoppingList.find {

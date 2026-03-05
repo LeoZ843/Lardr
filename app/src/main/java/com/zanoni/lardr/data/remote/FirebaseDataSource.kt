@@ -134,70 +134,40 @@ class FirebaseDataSource @Inject constructor(
         documentId: String,
         clazz: Class<T>
     ): Flow<T?> = callbackFlow {
-        Log.d(TAG, "Setting up listener for $collection/$documentId")
-
         var listener: ListenerRegistration? = null
 
         try {
             listener = firestore.collection(collection)
                 .document(documentId)
                 .addSnapshotListener { snapshot, error ->
-                    Log.d(TAG, "Snapshot received for $collection/$documentId")
-
                     if (error != null) {
-                        Log.e(TAG, "ERROR in listener: ${error.message}", error)
-                        // DON'T close, DON'T send null, just skip this update
+                        Log.e(TAG, "observeDocument error [$collection/$documentId]: ${error.message}")
+                        close(error)
                         return@addSnapshotListener
                     }
 
-                    if (snapshot == null) {
-                        Log.w(TAG, "Snapshot is null")
-                        return@addSnapshotListener
-                    }
-
-                    if (!snapshot.exists()) {
-                        Log.w(TAG, "Document doesn't exist: $collection/$documentId")
+                    if (snapshot == null || !snapshot.exists()) {
                         trySend(null)
                         return@addSnapshotListener
                     }
 
-                    // DON'T skip pending writes - we WANT to see our updates!
-                    // The pending write IS the data we just wrote
-
                     try {
-                        Log.d(TAG, "Parsing document: $collection/$documentId")
                         val data = snapshot.toObject(clazz)
-
-                        if (data == null) {
-                            Log.e(TAG, "Failed to parse document - toObject returned null")
-                        } else {
-                            Log.d(TAG, "Successfully parsed document: ${data::class.simpleName}")
-                            // Use trySend for non-blocking emit
-                            val sendResult = trySend(data)
-                            if (sendResult.isFailure) {
-                                Log.w(TAG, "Failed to send update - channel full or closed")
-                            } else {
-                                Log.d(TAG, "Successfully sent update to Flow")
-                            }
-                        }
+                        trySend(data)
                     } catch (e: Exception) {
-                        Log.e(TAG, "EXCEPTION parsing document: ${e.message}", e)
-                        Log.e(TAG, "Document data: ${snapshot.data}")
-                        // Don't send anything, just skip this update
+                        Log.e(TAG, "observeDocument parse error [$collection/$documentId]: ${e.message}")
+                        close(e)
                     }
                 }
-
-            Log.d(TAG, "Listener registered successfully for $collection/$documentId")
         } catch (e: Exception) {
-            Log.e(TAG, "EXCEPTION setting up listener: ${e.message}", e)
+            Log.e(TAG, "observeDocument setup error [$collection/$documentId]: ${e.message}")
             close(e)
         }
 
         awaitClose {
-            Log.d(TAG, "Closing listener for $collection/$documentId")
             listener?.remove()
         }
-    }.buffer(capacity = 64) // Add buffer to prevent backpressure
+    }.buffer(capacity = 64)
 
     // Placeholder for other existing methods
     suspend fun <T : Any> getDocument(

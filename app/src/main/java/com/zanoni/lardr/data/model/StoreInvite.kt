@@ -7,7 +7,7 @@ data class StoreInvite(
     val ownerId: String = "",
     val ownerUsername: String = "",
     val invitedUserId: String = "",
-    val status: StoreInviteStatus = StoreInviteStatus.PENDING,
+    val status: String = StoreInviteStatus.PENDING.name,
     val createdAt: Long = System.currentTimeMillis()
 )
 

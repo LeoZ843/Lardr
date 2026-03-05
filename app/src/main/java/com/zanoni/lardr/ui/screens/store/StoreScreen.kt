@@ -39,7 +39,6 @@ import com.zanoni.lardr.ui.components.AddIngredientDialog
 import com.zanoni.lardr.ui.components.AddRecipeDialog
 import com.zanoni.lardr.ui.components.BottomNavBar
 import com.zanoni.lardr.ui.components.ConflictDialog
-import com.zanoni.lardr.ui.components.ConflictResolutionDialog
 import com.zanoni.lardr.ui.components.RecipeConflictResolutionDialog
 import com.zanoni.lardr.ui.components.EditIngredientDialog
 import com.zanoni.lardr.ui.components.ErrorScreen
@@ -275,6 +274,8 @@ fun StoreScreen(
             ShareStoreDialog(
                 storeName = uiState.store?.name ?: "",
                 friends = uiState.friends,
+                existingMemberIds = uiState.store?.memberIds ?: emptyList(),
+                pendingInviteUserIds = uiState.pendingInviteUserIds,
                 onDismiss = { showShareDialog = false },
                 onConfirm = { friendIds ->
                     viewModel.shareStore(friendIds)
@@ -352,20 +353,6 @@ fun StoreScreen(
             )
         }
 
-        if (uiState.showConflictDialog) {
-            ConflictResolutionDialog(
-                ingredientName = uiState.conflictStarred?.name ?: "",
-                existingQuantity = uiState.conflictExisting?.quantity ?: "",
-                newQuantity = uiState.conflictStarred?.defaultQuantity ?: "",
-                onDismiss = {
-                    viewModel.dismissConflictDialog()
-                },
-                onResolve = { strategy, remember ->
-                    viewModel.resolveConflict(strategy, remember)
-                }
-            )
-        }
-
         if (uiState.showRecipeConflictDialog && uiState.currentRecipeConflict != null) {
             val conflict = uiState.currentRecipeConflict!!
             val currentIndex = uiState.conflictQueue.indexOf(conflict)
@@ -407,7 +394,7 @@ fun StoreScreen(
             )
         }
 
-        if (uiState.showConflictDialog && uiState.conflictStarred != null && uiState.conflictExisting != null) {
+        if (uiState.showConflictDialog) {
             ConflictDialog(
                 ingredientName = uiState.conflictStarred!!.name,
                 existingQuantity = uiState.conflictExisting!!.quantity,

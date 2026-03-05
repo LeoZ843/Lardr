@@ -20,6 +20,7 @@ import javax.inject.Inject
 import com.zanoni.lardr.data.repository.UserRepository
 import com.zanoni.lardr.data.model.User
 import com.zanoni.lardr.data.repository.AuthRepository
+import java.util.UUID
 
 data class StoreUiState(
     val store: Store? = null,
@@ -40,7 +41,8 @@ data class StoreUiState(
     val conflictQueue: List<RecipeConflict> = emptyList(),
     val currentRecipeConflict: RecipeConflict? = null,
     val showRecipeConflictDialog: Boolean = false,
-    val isAddingRecipe: Boolean = false  // Prevent double-click
+    val isAddingRecipe: Boolean = false,  // Prevent double-click
+    val pendingInviteUserIds: List<String> = emptyList()
 )
 
 data class RecipeConflict(
@@ -72,65 +74,73 @@ class StoreViewModel @Inject constructor(
     init {
         loadStore()
         loadFriends()
+        loadSentInvites()
     }
 
     private fun loadStore() {
         viewModelScope.launch {
-            android.util.Log.d("StoreViewModel", "Starting loadStore for storeId: $storeId")
+            _uiState.value = _uiState.value.copy(isLoading = true, isDataLoaded = false)
 
-            _uiState.value = _uiState.value.copy(
-                isLoading = true,
-                isDataLoaded = false
-            )
+            // Timeout: if no data in 10 seconds, show error
+            val timeoutJob = launch {
+                kotlinx.coroutines.delay(10_000)
+                if (!_uiState.value.isDataLoaded) {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isDataLoaded = true,
+                        error = "Could not load store. Check your connection."
+                    )
+                }
+            }
 
             try {
                 storeRepository.observeStore(storeId)
                     .collect { store ->
-                        android.util.Log.d("StoreViewModel", "Received store update: ${store?.id}")
+                        timeoutJob.cancel()
 
-                        try {
-                            if (store == null) {
-                                android.util.Log.w("StoreViewModel", "Store is null")
-                                return@collect
-                            }
-
-                            android.util.Log.d("StoreViewModel", "Processing store with ${store.shoppingList.size} items")
-
-                            val shoppingList = store.shoppingList.filter { !it.bought }
-                            val bought = store.shoppingList.filter { it.bought }
-
-                            android.util.Log.d("StoreViewModel", "Shopping: ${shoppingList.size}, Bought: ${bought.size}")
-
+                        if (store == null) {
                             _uiState.value = _uiState.value.copy(
-                                store = store,
-                                shoppingListItems = shoppingList,
-                                boughtItems = bought,
-                                starredIngredients = store.starredIngredients,
-                                recipes = store.recipes,
                                 isLoading = false,
                                 isDataLoaded = true,
-                                error = null
+                                error = "Store not found."
                             )
-
-                            android.util.Log.d("StoreViewModel", "UI state updated successfully")
-                        } catch (e: Exception) {
-                            android.util.Log.e("StoreViewModel", "ERROR processing store data: ${e.message}", e)
-                            _uiState.value = _uiState.value.copy(
-                                error = "Error processing store: ${e.message}"
-                            )
+                            return@collect
                         }
+
+                        _uiState.value = _uiState.value.copy(
+                            store = store,
+                            shoppingListItems = store.shoppingList.filter { !it.bought },
+                            boughtItems = store.shoppingList.filter { it.bought },
+                            starredIngredients = store.starredIngredients,
+                            recipes = store.recipes,
+                            isLoading = false,
+                            isDataLoaded = true,
+                            error = null
+                        )
                     }
             } catch (e: kotlinx.coroutines.CancellationException) {
-                // Flow cancelled - expected when navigating away from screen
-                android.util.Log.d("StoreViewModel", "Flow collection cancelled (user navigated away)")
-                // Don't set error state - this is normal navigation
+                timeoutJob.cancel()
+                // Normal navigation away — do nothing
             } catch (e: Exception) {
-                android.util.Log.e("StoreViewModel", "ERROR loading store: ${e.message}", e)
+                timeoutJob.cancel()
+                android.util.Log.e("StoreViewModel", "loadStore error: ${e.message}", e)
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isDataLoaded = true,
                     error = "Error loading store: ${e.message}"
                 )
+            }
+        }
+    }
+
+    private fun loadSentInvites() {
+        viewModelScope.launch {
+            val userId = authRepository.getCurrentUserId() ?: return@launch
+            userRepository.getSentStoreInvites(userId).collect { invites ->
+                val pendingForThisStore = invites
+                    .filter { it.storeId == storeId }
+                    .map { it.invitedUserId }
+                _uiState.value = _uiState.value.copy(pendingInviteUserIds = pendingForThisStore)
             }
         }
     }
@@ -174,7 +184,7 @@ class StoreViewModel @Inject constructor(
                     name = name,
                     periodicity = periodicity,
                     defaultQuantity = quantity,
-                    conflictStrategy = ConflictStrategy.ASK,
+                    conflictStrategy = ConflictStrategy.ASK.name,
                     lastAddedWeek = null
                 )
                 storeRepository.addStarredIngredient(storeId, starred)
@@ -403,32 +413,48 @@ class StoreViewModel @Inject constructor(
     fun addStarredIngredientToList(starredId: String) {
         viewModelScope.launch {
             val starred = _uiState.value.starredIngredients.find { it.id == starredId }
-            if (starred != null) {
-                val existing = _uiState.value.shoppingListItems.find {
-                    it.name.equals(starred.name, ignoreCase = true)
-                }
+                ?: return@launch
 
-                if (existing != null && starred.conflictStrategy != ConflictStrategy.ASK) {
-                    // Auto-apply strategy
-                    applyConflictStrategy(starred, existing, starred.conflictStrategy)
-                } else if (existing != null) {
-                    // Show dialog
+            // Check both active and bought items — bought items are still "in the list"
+            val existing = (_uiState.value.shoppingListItems + _uiState.value.boughtItems).find {
+                it.name.equals(starred.name, ignoreCase = true)
+            }
+
+            when {
+                existing == null -> {
+                    storeRepository.addIngredientToShoppingList(
+                        storeId,
+                        Ingredient(
+                            id = UUID.randomUUID().toString(),
+                            name = starred.name,
+                            quantity = starred.defaultQuantity,
+                            bought = false,
+                            addedBy = starred.id,
+                            addedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+                starred.conflictStrategy == ConflictStrategy.ASK.name -> {
                     _uiState.value = _uiState.value.copy(
                         showConflictDialog = true,
                         conflictStarred = starred,
                         conflictExisting = existing
                     )
-                } else {
-                    // No conflict, just add
-                    val newIngredient = Ingredient(
-                        id = java.util.UUID.randomUUID().toString(),
-                        name = starred.name,
-                        quantity = starred.defaultQuantity,
-                        bought = false,
-                        addedBy = starred.id,
-                        addedAt = System.currentTimeMillis()
-                    )
-                    storeRepository.addIngredientToShoppingList(storeId, newIngredient)
+                }
+                else -> {
+                    val strategy = runCatching {
+                        ConflictStrategy.valueOf(starred.conflictStrategy)
+                    }.getOrDefault(ConflictStrategy.ASK)
+
+                    if (strategy == ConflictStrategy.ASK) {
+                        _uiState.value = _uiState.value.copy(
+                            showConflictDialog = true,
+                            conflictStarred = starred,
+                            conflictExisting = existing
+                        )
+                    } else {
+                        applyConflictStrategy(starred, existing, strategy)
+                    }
                 }
             }
         }
@@ -444,7 +470,7 @@ class StoreViewModel @Inject constructor(
                 if (remember) {
                     storeRepository.updateStarredIngredient(
                         storeId,
-                        starred.copy(conflictStrategy = strategy)
+                        starred.copy(conflictStrategy = strategy.name)
                     )
                 }
 
@@ -722,7 +748,7 @@ class StoreViewModel @Inject constructor(
                             name = name,
                             periodicity = periodicity,
                             defaultQuantity = quantity,
-                            conflictStrategy = ConflictStrategy.ASK,
+                            conflictStrategy = ConflictStrategy.ASK.name,
                             lastAddedWeek = null
                         )
                         storeRepository.addStarredIngredient(storeId, starred)

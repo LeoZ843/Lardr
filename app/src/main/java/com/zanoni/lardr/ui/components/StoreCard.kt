@@ -7,21 +7,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +36,7 @@ fun StoreCard(
     onDelete: () -> Unit,
     onUpdate: (String) -> Unit,
     friends: List<User>,
+    pendingInviteUserIds: List<String> = emptyList(),
     onShareStore: (List<String>) -> Unit,
     onNavigateToFriends: () -> Unit,
     modifier: Modifier = Modifier
@@ -51,9 +47,7 @@ fun StoreCard(
     Card(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
@@ -63,17 +57,13 @@ fun StoreCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = store.name,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold
                 )
-
                 Spacer(modifier = Modifier.height(4.dp))
-
                 Text(
                     text = "${store.shoppingList.size} items",
                     style = MaterialTheme.typography.bodyMedium,
@@ -107,6 +97,8 @@ fun StoreCard(
         ShareStoreDialog(
             storeName = store.name,
             friends = friends,
+            existingMemberIds = store.memberIds,
+            pendingInviteUserIds = pendingInviteUserIds,
             onDismiss = { showShareDialog = false },
             onConfirm = { friendIds ->
                 onShareStore(friendIds)
