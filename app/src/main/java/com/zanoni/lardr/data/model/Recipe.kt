@@ -1,5 +1,8 @@
 package com.zanoni.lardr.data.model
 
+import com.google.firebase.firestore.IgnoreExtraProperties
+
+@IgnoreExtraProperties
 data class Recipe(
     val id: String = "",
     val name: String = "",
@@ -9,6 +12,7 @@ data class Recipe(
     val lastAddedWeek: Int? = null
 )
 
+@IgnoreExtraProperties
 data class RecipeIngredient(
     val name: String = "",
     val quantity: String? = null

@@ -4,10 +4,9 @@ import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
-import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -139,13 +138,26 @@ class FirebaseDataSource @Inject constructor(
         try {
             listener = firestore.collection(collection)
                 .document(documentId)
-                .addSnapshotListener { snapshot, error ->
+                // INCLUDE metadata changes so we get both cache and server snapshots.
+                // Without this, Firestore only fires once the server responds, but may still
+                // deliver a stale/empty cache snapshot first with no way to distinguish it.
+                .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                     if (error != null) {
                         Log.e(TAG, "observeDocument error [$collection/$documentId]: ${error.message}")
-                        close(error)
+                        // Transient Firestore error — keep the listener alive for the next snapshot.
                         return@addSnapshotListener
                     }
 
+                    val isFromCache = snapshot?.metadata?.isFromCache ?: true
+
+                    // Cache reports document absent: we cannot distinguish "does not exist"
+                    // from "not cached yet". Skip and wait for the server snapshot.
+                    if ((snapshot == null || !snapshot.exists()) && isFromCache) {
+                        Log.d(TAG, "observeDocument skipping empty cache snapshot for $collection/$documentId")
+                        return@addSnapshotListener
+                    }
+
+                    // Server confirmed the document is gone (or snapshot is null from server).
                     if (snapshot == null || !snapshot.exists()) {
                         trySend(null)
                         return@addSnapshotListener
@@ -156,7 +168,7 @@ class FirebaseDataSource @Inject constructor(
                         trySend(data)
                     } catch (e: Exception) {
                         Log.e(TAG, "observeDocument parse error [$collection/$documentId]: ${e.message}")
-                        close(e)
+                        // Skip malformed snapshot — listener stays active.
                     }
                 }
         } catch (e: Exception) {
@@ -164,12 +176,9 @@ class FirebaseDataSource @Inject constructor(
             close(e)
         }
 
-        awaitClose {
-            listener?.remove()
-        }
+        awaitClose { listener?.remove() }
     }.buffer(capacity = 64)
 
-    // Placeholder for other existing methods
     suspend fun <T : Any> getDocument(
         collection: String,
         documentId: String,
@@ -182,7 +191,6 @@ class FirebaseDataSource @Inject constructor(
                 .await()
             snapshot.toObject(clazz)
         } catch (e: Exception) {
-            // Don't re-throw cancellation - let user-initiated operations complete
             Log.e(TAG, "Error getting document: ${e.message}", e)
             null
         }

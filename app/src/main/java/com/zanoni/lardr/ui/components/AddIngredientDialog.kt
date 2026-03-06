@@ -26,18 +26,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.zanoni.lardr.data.model.ConflictStrategy
 
 @Composable
 fun AddIngredientDialog(
     initialIsStarred: Boolean = false,
     existingNames: List<String> = emptyList(),
     onDismiss: () -> Unit,
-    onAdd: (name: String, quantity: String, periodicity: Int?) -> Unit
+    onAdd: (name: String, quantity: String, periodicity: Int?, conflictStrategy: ConflictStrategy) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var quantity by remember { mutableStateOf("") }
     var isStarred by remember { mutableStateOf(initialIsStarred) }
     var periodicity by remember { mutableStateOf("") }
+    var conflictStrategy by remember { mutableStateOf(ConflictStrategy.ASK) }
     var nameError by remember { mutableStateOf<String?>(null) }
     var periodicityError by remember { mutableStateOf<String?>(null) }
 
@@ -157,6 +159,13 @@ fun AddIngredientDialog(
                             }
                         }
                     )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    ConflictStrategyDropdown(
+                        selected = conflictStrategy,
+                        onSelected = { conflictStrategy = it }
+                    )
                 }
             }
         },
@@ -169,7 +178,7 @@ fun AddIngredientDialog(
                         } else {
                             null
                         }
-                        onAdd(name, quantity, periodicityValue)
+                        onAdd(name, quantity, periodicityValue, conflictStrategy)
                     }
                 }
             ) {

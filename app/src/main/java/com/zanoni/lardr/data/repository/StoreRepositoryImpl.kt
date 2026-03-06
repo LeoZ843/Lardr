@@ -225,16 +225,17 @@ class StoreRepositoryImpl @Inject constructor(
         }
     }
 
-    // OPTIMIZED: Use atomic arrayRemove
+    // Use read-modify-write like updateStarredIngredient — arrayRemove matches by full
+    // object equality on the server, which silently fails if any field serializes differently
+    // (e.g. null Int? stored as absent vs explicit null).
     override suspend fun deleteStarredIngredient(storeId: String, starredIngredientId: String): Result<Unit> {
         return try {
             val store = dataSource.getDocument("stores", storeId, Store::class.java)
                 ?: return Result.Error(Exception("Store not found"))
 
-            val starred = store.starredIngredients.find { it.id == starredIngredientId }
-                ?: return Result.Error(Exception("Starred ingredient not found"))
+            val updatedList = store.starredIngredients.filter { it.id != starredIngredientId }
 
-            dataSource.removeArrayValue("stores", storeId, "starredIngredients", starred)
+            dataSource.updateDocument("stores", storeId, mapOf("starredIngredients" to updatedList))
             Result.Success(Unit)
         } catch (e: Exception) {
             Result.Error(e)
@@ -267,16 +268,14 @@ class StoreRepositoryImpl @Inject constructor(
         }
     }
 
-    // OPTIMIZED: Use atomic arrayRemove
     override suspend fun deleteRecipe(storeId: String, recipeId: String): Result<Unit> {
         return try {
             val store = dataSource.getDocument("stores", storeId, Store::class.java)
                 ?: return Result.Error(Exception("Store not found"))
 
-            val recipe = store.recipes.find { it.id == recipeId }
-                ?: return Result.Error(Exception("Recipe not found"))
+            val updatedList = store.recipes.filter { it.id != recipeId }
 
-            dataSource.removeArrayValue("stores", storeId, "recipes", recipe)
+            dataSource.updateDocument("stores", storeId, mapOf("recipes" to updatedList))
             Result.Success(Unit)
         } catch (e: Exception) {
             Result.Error(e)
@@ -453,15 +452,14 @@ class StoreRepositoryImpl @Inject constructor(
         if (qty1.isBlank()) return qty2
         if (qty2.isBlank()) return qty1
 
-        val num1 = qty1.filter { it.isDigit() || it == '.' }.toDoubleOrNull()
-        val num2 = qty2.filter { it.isDigit() || it == '.' }.toDoubleOrNull()
-        val unit1 = qty1.filter { it.isLetter() || it == ' ' }.trim()
-        val unit2 = qty2.filter { it.isLetter() || it == ' ' }.trim()
+        val num1 = qty1.trim().toDoubleOrNull()
+        val num2 = qty2.trim().toDoubleOrNull()
 
-        return if (num1 != null && num2 != null && unit1.equals(unit2, ignoreCase = true)) {
-            "${(num1 + num2).toInt()}$unit1"
+        return if (num1 != null && num2 != null) {
+            val sum = num1 + num2
+            if (sum == sum.toLong().toDouble()) sum.toLong().toString() else sum.toString()
         } else {
-            "$qty1 + $qty2"
+            "${qty1.trim()} + ${qty2.trim()}"
         }
     }
 }

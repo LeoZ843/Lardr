@@ -1,5 +1,8 @@
 package com.zanoni.lardr.data.model
 
+import com.google.firebase.firestore.IgnoreExtraProperties
+
+@IgnoreExtraProperties
 data class StoreInvite(
     val id: String = "",
     val storeId: String = "",

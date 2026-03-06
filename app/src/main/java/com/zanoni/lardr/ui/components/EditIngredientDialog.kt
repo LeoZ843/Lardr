@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.zanoni.lardr.data.model.ConflictStrategy
 import com.zanoni.lardr.data.model.Ingredient
 import com.zanoni.lardr.data.model.StarredIngredient
 
@@ -36,8 +37,9 @@ fun EditIngredientDialog(
     starredIngredient: StarredIngredient? = null,
     initialStarred: Boolean = false,
     initialPeriodicity: Int? = null,
+    initialConflictStrategy: ConflictStrategy = ConflictStrategy.ASK,
     onDismiss: () -> Unit,
-    onUpdate: (name: String, quantity: String, periodicity: Int?) -> Unit,
+    onUpdate: (name: String, quantity: String, isStarred: Boolean, periodicity: Int?, conflictStrategy: ConflictStrategy) -> Unit,
     onDelete: () -> Unit
 ) {
     val isEditingStarred = starredIngredient != null
@@ -48,6 +50,7 @@ fun EditIngredientDialog(
     var quantity by remember { mutableStateOf(initialQuantity) }
     var starred by remember { mutableStateOf(initialStarred || isEditingStarred) }
     var periodicity by remember { mutableStateOf((starredIngredient?.periodicity ?: initialPeriodicity)?.toString() ?: "") }
+    var conflictStrategy by remember { mutableStateOf(initialConflictStrategy) }
     var nameError by remember { mutableStateOf<String?>(null) }
     var periodicityError by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -200,6 +203,13 @@ fun EditIngredientDialog(
                                 }
                             }
                         )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        ConflictStrategyDropdown(
+                            selected = conflictStrategy,
+                            onSelected = { conflictStrategy = it }
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -224,7 +234,7 @@ fun EditIngredientDialog(
                             } else {
                                 null
                             }
-                            onUpdate(name, quantity, periodicityValue)
+                            onUpdate(name, quantity, starred || isEditingStarred, periodicityValue, conflictStrategy)
                         }
                     }
                 ) {

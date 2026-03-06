@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zanoni.lardr.data.model.ConflictStrategy
 import com.zanoni.lardr.data.model.Ingredient
 import com.zanoni.lardr.data.model.StarredIngredient
 import com.zanoni.lardr.ui.components.AddIngredientDialog
@@ -69,7 +70,6 @@ fun StoreScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     var showShareDialog by remember { mutableStateOf(false) }
-
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showAddIngredientDialog by remember { mutableStateOf(false) }
     var addIngredientInitialStarred by remember { mutableStateOf(false) }
@@ -144,21 +144,7 @@ fun StoreScreen(
                     when (route) {
                         "home" -> onNavigateBack()
                         "settings" -> onNavigateToSettings()
-                        "add" -> {
-                            when (uiState.currentTab) {
-                                StoreTab.SHOPPING_LIST -> {
-                                    addIngredientInitialStarred = false
-                                    showAddIngredientDialog = true
-                                }
-
-                                StoreTab.STARRED -> {
-                                    addIngredientInitialStarred = true
-                                    showAddIngredientDialog = true
-                                }
-
-                                StoreTab.RECIPES -> showAddRecipeDialog = true
-                            }
-                        }
+                        else -> onNavigate(route)
                     }
                 }
             )
@@ -171,12 +157,10 @@ fun StoreScreen(
                             addIngredientInitialStarred = false
                             showAddIngredientDialog = true
                         }
-
                         StoreTab.STARRED -> {
                             addIngredientInitialStarred = true
                             showAddIngredientDialog = true
                         }
-
                         StoreTab.RECIPES -> showAddRecipeDialog = true
                     }
                 },
@@ -197,7 +181,6 @@ fun StoreScreen(
                     modifier = Modifier.padding(paddingValues)
                 )
             }
-
             uiState.error != null -> {
                 ErrorScreen(
                     message = uiState.error!!,
@@ -205,7 +188,6 @@ fun StoreScreen(
                     modifier = Modifier.padding(paddingValues)
                 )
             }
-
             else -> {
                 Column(
                     modifier = Modifier
@@ -246,7 +228,6 @@ fun StoreScreen(
                                 }
                             )
                         }
-
                         StoreTab.STARRED -> {
                             StarredIngredientsTab(
                                 starredIngredients = uiState.starredIngredients,
@@ -257,11 +238,10 @@ fun StoreScreen(
                                 }
                             )
                         }
-
                         StoreTab.RECIPES -> {
                             RecipesTab(
                                 recipes = uiState.recipes,
-                                onRecipeClick = { /* TODO: Show recipe details */ },
+                                onRecipeClick = { },
                                 onAddRecipeToList = { viewModel.addRecipeToShoppingList(it) }
                             )
                         }
@@ -301,18 +281,23 @@ fun StoreScreen(
         }
 
         if (showAddIngredientDialog) {
+            // Include both active and bought items so the dialog can block true duplicates.
+            // When adding from the Starred tab, also check the full shopping list (not just
+            // starred names) because the ingredient will be added to the list as well.
+            val allListNames = (uiState.shoppingListItems + uiState.boughtItems).map { it.name }
+            val existingNames = if (addIngredientInitialStarred) {
+                // Starred names + shopping list names: prevent duplicates in both places.
+                (uiState.starredIngredients.map { it.name } + allListNames).distinct()
+            } else {
+                allListNames
+            }
+
             AddIngredientDialog(
                 initialIsStarred = addIngredientInitialStarred,
-                existingNames = if (addIngredientInitialStarred) {
-                    // For starred: check starred names to prevent duplicates
-                    uiState.starredIngredients.map { it.name }
-                } else {
-                    // For shopping list: check shopping list names to prevent duplicates
-                    uiState.shoppingListItems.map { it.name }
-                },
+                existingNames = existingNames,
                 onDismiss = { showAddIngredientDialog = false },
-                onAdd = { name, quantity, periodicity ->
-                    viewModel.addIngredient(name, quantity, periodicity)
+                onAdd = { name, quantity, periodicity, conflictStrategy ->
+                    viewModel.addIngredient(name, quantity, periodicity, conflictStrategy)
                     showAddIngredientDialog = false
                 }
             )
@@ -336,12 +321,15 @@ fun StoreScreen(
                 ingredient = ingredient,
                 initialStarred = starredIngredient != null,
                 initialPeriodicity = starredIngredient?.periodicity,
+                initialConflictStrategy = starredIngredient?.let {
+                    runCatching { ConflictStrategy.valueOf(it.conflictStrategy) }.getOrDefault(ConflictStrategy.ASK)
+                } ?: ConflictStrategy.ASK,
                 onDismiss = {
                     showEditIngredientDialog = false
                     ingredientToEdit = null
                 },
-                onUpdate = { name, quantity, periodicity ->
-                    viewModel.updateIngredient(ingredient.id, name, quantity, periodicity)
+                onUpdate = { name, quantity, isStarred, periodicity, conflictStrategy ->
+                    viewModel.updateIngredient(ingredient.id, name, quantity, isStarred, periodicity, conflictStrategy)
                     showEditIngredientDialog = false
                     ingredientToEdit = null
                 },
@@ -355,17 +343,16 @@ fun StoreScreen(
 
         if (uiState.showRecipeConflictDialog && uiState.currentRecipeConflict != null) {
             val conflict = uiState.currentRecipeConflict!!
-            val currentIndex = uiState.conflictQueue.indexOf(conflict)
+            val resolvedCount = uiState.totalRecipeConflicts - uiState.conflictQueue.size
+            val currentIndex = resolvedCount
 
             RecipeConflictResolutionDialog(
                 ingredientName = conflict.recipeIngredient.name,
                 existingQuantity = conflict.existingIngredient.quantity,
                 newQuantity = conflict.recipeIngredient.quantity ?: "",
                 currentIndex = currentIndex,
-                totalConflicts = uiState.conflictQueue.size,
-                onDismiss = {
-                    viewModel.dismissRecipeConflictDialog()
-                },
+                totalConflicts = uiState.totalRecipeConflicts,
+                onDismiss = { viewModel.dismissRecipeConflictDialog() },
                 onResolve = { strategy, applyToAll ->
                     viewModel.resolveRecipeConflict(strategy, applyToAll)
                 }
@@ -377,12 +364,13 @@ fun StoreScreen(
 
             EditIngredientDialog(
                 starredIngredient = starred,
+                initialConflictStrategy = runCatching { ConflictStrategy.valueOf(starred.conflictStrategy) }.getOrDefault(ConflictStrategy.ASK),
                 onDismiss = {
                     showEditStarredDialog = false
                     starredToEdit = null
                 },
-                onUpdate = { name, quantity, periodicity ->
-                    viewModel.updateStarredIngredient(starred.id, name, quantity, periodicity)
+                onUpdate = { name, quantity, _, periodicity, conflictStrategy ->
+                    viewModel.updateStarredIngredient(starred.id, name, quantity, periodicity, conflictStrategy)
                     showEditStarredDialog = false
                     starredToEdit = null
                 },
