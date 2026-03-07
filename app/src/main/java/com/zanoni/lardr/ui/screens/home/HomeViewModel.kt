@@ -2,6 +2,7 @@ package com.zanoni.lardr.ui.screens.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.zanoni.lardr.data.local.StoreCache
 import com.zanoni.lardr.data.model.Store
 import com.zanoni.lardr.data.model.StoreInvite
 import com.zanoni.lardr.data.model.User
@@ -29,7 +30,8 @@ data class HomeUiState(
 class HomeViewModel @Inject constructor(
     private val storeRepository: StoreRepository,
     private val authRepository: AuthRepository,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val storeCache: StoreCache
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -78,6 +80,26 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun loadStores() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            val userId = authRepository.getCurrentUserId()
+            if (userId != null) {
+                storeRepository.getStoresForUser(userId).collect { stores ->
+                    // Populate cache so StoreScreen can start instantly
+                    storeCache.putAll(stores)
+                    _uiState.value = _uiState.value.copy(
+                        stores = stores,
+                        isLoading = false,
+                        error = null
+                    )
+                }
+            } else {
+                _uiState.value = _uiState.value.copy(isLoading = false, error = "Not logged in")
+            }
+        }
+    }
+
     fun shareStore(storeId: String, friendIds: List<String>) {
         viewModelScope.launch {
             val store = _uiState.value.stores.find { it.id == storeId } ?: return@launch
@@ -106,24 +128,6 @@ class HomeViewModel @Inject constructor(
         )
         viewModelScope.launch {
             userRepository.declineStoreInvite(inviteId)
-        }
-    }
-
-    private fun loadStores() {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            val userId = authRepository.getCurrentUserId()
-            if (userId != null) {
-                storeRepository.getStoresForUser(userId).collect { stores ->
-                    _uiState.value = _uiState.value.copy(
-                        stores = stores,
-                        isLoading = false,
-                        error = null
-                    )
-                }
-            } else {
-                _uiState.value = _uiState.value.copy(isLoading = false, error = "Not logged in")
-            }
         }
     }
 

@@ -9,19 +9,20 @@ import com.zanoni.lardr.data.model.Recipe
 import com.zanoni.lardr.data.model.RecipeIngredient
 import com.zanoni.lardr.data.model.StarredIngredient
 import com.zanoni.lardr.data.model.Store
-import com.zanoni.lardr.data.repository.StoreRepository
+import com.zanoni.lardr.data.local.StoreCache
+import com.zanoni.lardr.data.model.User
+import com.zanoni.lardr.data.repository.AuthRepository
 import com.zanoni.lardr.data.repository.Result
+import com.zanoni.lardr.data.repository.StoreRepository
+import com.zanoni.lardr.data.repository.UserRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import javax.inject.Inject
-import com.zanoni.lardr.data.repository.UserRepository
-import com.zanoni.lardr.data.model.User
-import com.zanoni.lardr.data.repository.AuthRepository
 import java.util.UUID
+import javax.inject.Inject
 
 data class StoreUiState(
     val store: Store? = null,
@@ -37,13 +38,15 @@ data class StoreUiState(
     val showConflictDialog: Boolean = false,
     val conflictStarred: StarredIngredient? = null,
     val conflictExisting: Ingredient? = null,
-    val friends: List<User> = emptyList(),
     val conflictQueue: List<RecipeConflict> = emptyList(),
     val totalRecipeConflicts: Int = 0,
     val currentRecipeConflict: RecipeConflict? = null,
     val showRecipeConflictDialog: Boolean = false,
+    val pendingRecipeId: String? = null,
+    val friends: List<User> = emptyList(),
+    val pendingInviteUserIds: List<String> = emptyList(),
     val isAddingRecipe: Boolean = false,
-    val pendingInviteUserIds: List<String> = emptyList()
+    val pendingStarredAdds: Set<String> = emptySet()
 )
 
 data class RecipeConflict(
@@ -53,26 +56,41 @@ data class RecipeConflict(
     val recipeName: String
 )
 
-enum class StoreTab {
-    SHOPPING_LIST,
-    STARRED,
-    RECIPES
-}
+enum class StoreTab { SHOPPING_LIST, STARRED, RECIPES }
 
 @HiltViewModel
 class StoreViewModel @Inject constructor(
     private val storeRepository: StoreRepository,
     private val authRepository: AuthRepository,
     private val userRepository: UserRepository,
+    private val storeCache: StoreCache,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
     private val storeId: String = checkNotNull(savedStateHandle["storeId"])
-
     private var loadJob: Job? = null
 
-    private val _uiState = MutableStateFlow(StoreUiState())
+    private val _uiState = MutableStateFlow(buildInitialState())
     val uiState: StateFlow<StoreUiState> = _uiState.asStateFlow()
+
+    // Pre-populate from cache so the UI renders instantly on open.
+    // HomeViewModel already loaded all stores — no need to wait for observeStore.
+    private fun buildInitialState(): StoreUiState {
+        val cached = storeCache.get(storeId)
+        return if (cached != null) {
+            StoreUiState(
+                store = cached,
+                shoppingListItems = cached.shoppingList.filter { !it.bought },
+                boughtItems = cached.shoppingList.filter { it.bought },
+                starredIngredients = cached.starredIngredients,
+                recipes = cached.recipes,
+                isLoading = false,
+                isDataLoaded = true
+            )
+        } else {
+            StoreUiState(isLoading = true, isDataLoaded = false)
+        }
+    }
 
     init {
         loadStore()
@@ -80,51 +98,42 @@ class StoreViewModel @Inject constructor(
         loadSentInvites()
     }
 
+    // ─── Store loading ────────────────────────────────────────────────────────
+    // observeStore is used only for remote sync — the UI never waits on it for
+    // local mutations since every write path does an optimistic state update first.
+
     private fun loadStore() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, isDataLoaded = false)
-
-            val timeoutJob = launch {
-                kotlinx.coroutines.delay(10_000)
-                if (!_uiState.value.isDataLoaded) {
+            // Only show spinner if cache gave us nothing to display.
+            if (!_uiState.value.isDataLoaded) {
+                _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            }
+            try {
+                storeRepository.observeStore(storeId).collect { store ->
+                    if (store == null) {
+                        if (_uiState.value.isDataLoaded) {
+                            _uiState.value = _uiState.value.copy(error = "Store not found.")
+                        }
+                        return@collect
+                    }
+                    // Keep cache up to date so subsequent opens are instant.
+                    storeCache.put(store)
+                    // Only update store-related fields — never touch snackbarMessage here.
                     _uiState.value = _uiState.value.copy(
+                        store = store,
+                        shoppingListItems = store.shoppingList.filter { !it.bought },
+                        boughtItems = store.shoppingList.filter { it.bought },
+                        starredIngredients = store.starredIngredients,
+                        recipes = store.recipes,
                         isLoading = false,
                         isDataLoaded = true,
-                        error = "Could not load store. Check your connection."
+                        error = null
                     )
                 }
-            }
-
-            try {
-                storeRepository.observeStore(storeId)
-                    .collect { store ->
-                        timeoutJob.cancel()
-
-                        if (store == null) {
-                            _uiState.value = _uiState.value.copy(
-                                isLoading = false,
-                                isDataLoaded = true,
-                                error = "Store not found."
-                            )
-                            return@collect
-                        }
-
-                        _uiState.value = _uiState.value.copy(
-                            store = store,
-                            shoppingListItems = store.shoppingList.filter { !it.bought },
-                            boughtItems = store.shoppingList.filter { it.bought },
-                            starredIngredients = store.starredIngredients,
-                            recipes = store.recipes,
-                            isLoading = false,
-                            isDataLoaded = true,
-                            error = null
-                        )
-                    }
             } catch (e: kotlinx.coroutines.CancellationException) {
-                timeoutJob.cancel()
+                throw e
             } catch (e: Exception) {
-                timeoutJob.cancel()
                 android.util.Log.e("StoreViewModel", "loadStore error: ${e.message}", e)
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -135,14 +144,17 @@ class StoreViewModel @Inject constructor(
         }
     }
 
+    fun retryLoad() = loadStore()
+
+    // ─── Social ───────────────────────────────────────────────────────────────
+
     private fun loadSentInvites() {
         viewModelScope.launch {
             val userId = authRepository.getCurrentUserId() ?: return@launch
             userRepository.getSentStoreInvites(userId).collect { invites ->
-                val pendingForThisStore = invites
-                    .filter { it.storeId == storeId }
-                    .map { it.invitedUserId }
-                _uiState.value = _uiState.value.copy(pendingInviteUserIds = pendingForThisStore)
+                _uiState.value = _uiState.value.copy(
+                    pendingInviteUserIds = invites.filter { it.storeId == storeId }.map { it.invitedUserId }
+                )
             }
         }
     }
@@ -160,26 +172,29 @@ class StoreViewModel @Inject constructor(
         viewModelScope.launch {
             val store = _uiState.value.store ?: return@launch
             friendIds.forEach { friendId ->
-                userRepository.sendStoreInvite(
-                    storeId = store.id,
-                    storeName = store.name,
-                    friendId = friendId
-                )
+                userRepository.sendStoreInvite(storeId = store.id, storeName = store.name, friendId = friendId)
             }
         }
     }
+
+    // ─── Navigation ──────────────────────────────────────────────────────────
 
     fun selectTab(tab: StoreTab) {
         _uiState.value = _uiState.value.copy(currentTab = tab)
     }
 
-    fun addIngredient(name: String, quantity: String, periodicity: Int? = null, conflictStrategy: ConflictStrategy = ConflictStrategy.ASK) {
+    // ─── Manual ingredient add ────────────────────────────────────────────────
+
+    fun addIngredient(
+        name: String,
+        quantity: String,
+        periodicity: Int? = null,
+        conflictStrategy: ConflictStrategy = ConflictStrategy.ASK
+    ) {
         val trimmedName = name.trim()
         viewModelScope.launch {
-            val allListItems = _uiState.value.shoppingListItems + _uiState.value.boughtItems
-
+            val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
             if (periodicity != null) {
-                // Adding as starred ingredient — also adds to shopping list immediately.
                 val starred = StarredIngredient(
                     id = UUID.randomUUID().toString(),
                     name = trimmedName,
@@ -188,12 +203,8 @@ class StoreViewModel @Inject constructor(
                     conflictStrategy = conflictStrategy.name,
                     lastAddedWeek = null
                 )
-                storeRepository.addStarredIngredient(storeId, starred)
-
-                // Only add to shopping list if not already present (bought or active).
-                val alreadyInList = allListItems.any { it.name.equals(trimmedName, ignoreCase = true) }
-                if (!alreadyInList) {
-                    val ingredient = Ingredient(
+                val newIngredient = if (!currentList.any { it.name.equals(trimmedName, ignoreCase = true) }) {
+                    Ingredient(
                         id = UUID.randomUUID().toString(),
                         name = trimmedName,
                         quantity = quantity,
@@ -201,14 +212,23 @@ class StoreViewModel @Inject constructor(
                         addedBy = starred.id,
                         addedAt = System.currentTimeMillis()
                     )
-                    storeRepository.addIngredientToShoppingList(storeId, ingredient)
+                } else null
+
+                // Optimistic update
+                _uiState.value = _uiState.value.copy(
+                    starredIngredients = _uiState.value.starredIngredients + starred,
+                    shoppingListItems = if (newIngredient != null)
+                        _uiState.value.shoppingListItems + newIngredient
+                    else
+                        _uiState.value.shoppingListItems
+                )
+
+                storeRepository.addStarredIngredient(storeId, starred)
+                if (newIngredient != null) {
+                    storeRepository.addIngredientToShoppingList(storeId, newIngredient, currentList)
                 }
             } else {
-                // Plain shopping list addition — guard against duplicates not caught by the dialog
-                // (e.g. name already exists in bought items, or race condition).
-                val alreadyInList = allListItems.any { it.name.equals(trimmedName, ignoreCase = true) }
-                if (alreadyInList) return@launch
-
+                if (currentList.any { it.name.equals(trimmedName, ignoreCase = true) }) return@launch
                 val ingredient = Ingredient(
                     id = UUID.randomUUID().toString(),
                     name = trimmedName,
@@ -217,280 +237,142 @@ class StoreViewModel @Inject constructor(
                     addedBy = "manual",
                     addedAt = System.currentTimeMillis()
                 )
-                storeRepository.addIngredientToShoppingList(storeId, ingredient)
+                // Optimistic update
+                _uiState.value = _uiState.value.copy(
+                    shoppingListItems = _uiState.value.shoppingListItems + ingredient
+                )
+                syncCache()
+                storeRepository.addIngredientToShoppingList(storeId, ingredient, currentList)
             }
         }
     }
 
-    fun addRecipe(name: String, ingredients: List<Pair<String, String>>, periodicity: Int?) {
-        viewModelScope.launch {
-            val recipeId = UUID.randomUUID().toString()
-            val recipeIngredients = ingredients.map { (ingredientName, qty) ->
-                RecipeIngredient(name = ingredientName, quantity = qty)
-            }
-            val recipe = Recipe(
-                id = recipeId,
-                name = name,
-                ingredients = recipeIngredients,
-                periodicity = periodicity,
-                conflictStrategy = null,
-                lastAddedWeek = null
+    // ─── Starred → list ───────────────────────────────────────────────────────
+
+    fun addStarredIngredientToList(starredId: String) {
+        if (_uiState.value.pendingStarredAdds.contains(starredId)) return
+
+        val starred = _uiState.value.starredIngredients.find { it.id == starredId } ?: return
+        val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
+        val existing = currentList.find { it.name.equals(starred.name, ignoreCase = true) }
+        val strategy = runCatching { ConflictStrategy.valueOf(starred.conflictStrategy) }
+            .getOrDefault(ConflictStrategy.ASK)
+
+        if (strategy == ConflictStrategy.ASK && existing != null) {
+            _uiState.value = _uiState.value.copy(
+                showConflictDialog = true,
+                conflictStarred = starred,
+                conflictExisting = existing
             )
-            storeRepository.addRecipe(storeId, recipe)
+            return
         }
-    }
 
-    fun addRecipeToShoppingList(recipeId: String) {
-        if (_uiState.value.isAddingRecipe) return
+        // Compute optimistic list and message before any async work.
+        val optimisticList: List<Ingredient>? = when {
+            existing == null -> currentList + Ingredient(
+                id = UUID.randomUUID().toString(),
+                name = starred.name,
+                quantity = starred.defaultQuantity,
+                bought = false,
+                addedBy = starred.id,
+                addedAt = System.currentTimeMillis()
+            )
+            strategy == ConflictStrategy.IGNORE -> null
+            strategy == ConflictStrategy.INCREASE -> currentList.map { item ->
+                if (item.id == existing.id) item.copy(quantity = combineQuantities(item.quantity, starred.defaultQuantity))
+                else item
+            }
+            strategy == ConflictStrategy.REPLACE -> currentList.map { item ->
+                if (item.id == existing.id) item.copy(quantity = starred.defaultQuantity, addedBy = starred.id, addedAt = System.currentTimeMillis())
+                else item
+            }
+            else -> null
+        }
+
+        val successMessage = when {
+            existing == null -> null
+            strategy == ConflictStrategy.REPLACE -> "\"${starred.name}\" quantity replaced"
+            strategy == ConflictStrategy.IGNORE -> "\"${starred.name}\" already in list, skipped"
+            strategy == ConflictStrategy.INCREASE -> "\"${starred.name}\" quantity increased"
+            else -> null
+        }
+
+        // Optimistic update — UI reflects change immediately.
+        if (optimisticList != null) {
+            _uiState.value = _uiState.value.copy(
+                shoppingListItems = optimisticList.filter { !it.bought },
+                boughtItems = optimisticList.filter { it.bought },
+                snackbarMessage = successMessage,
+                pendingStarredAdds = _uiState.value.pendingStarredAdds + starredId
+            )
+        } else {
+            _uiState.value = _uiState.value.copy(
+                snackbarMessage = successMessage,
+                pendingStarredAdds = _uiState.value.pendingStarredAdds + starredId
+            )
+        }
 
         viewModelScope.launch {
             try {
-                _uiState.value = _uiState.value.copy(isAddingRecipe = true)
-
-                val recipe = _uiState.value.recipes.find { it.id == recipeId } ?: return@launch
-
-                val allExistingIngredients = _uiState.value.shoppingListItems + _uiState.value.boughtItems
-                val existingMap = allExistingIngredients.associateBy { it.name.lowercase() }
-
-                val newIngredients = mutableListOf<Ingredient>()
-                val duplicates = mutableListOf<RecipeConflict>()
-
-                recipe.ingredients.forEach { recipeIngredient ->
-                    val existing = existingMap[recipeIngredient.name.lowercase()]
-                    if (existing != null) {
-                        duplicates.add(
-                            RecipeConflict(
-                                recipeIngredient = recipeIngredient,
-                                existingIngredient = existing,
-                                recipeId = recipe.id,
-                                recipeName = recipe.name
-                            )
-                        )
-                    } else {
-                        newIngredients.add(
-                            Ingredient(
-                                id = UUID.randomUUID().toString(),
-                                name = recipeIngredient.name,
-                                quantity = recipeIngredient.quantity ?: "",
-                                bought = false,
-                                addedBy = recipe.id,
-                                addedAt = System.currentTimeMillis()
-                            )
-                        )
-                    }
-                }
-
-                // Parse the stored strategy string; default to ASK so duplicates surface.
-                val strategy: ConflictStrategy = recipe.conflictStrategy
-                    ?.let { runCatching { ConflictStrategy.valueOf(it) }.getOrNull() }
-                    ?: ConflictStrategy.ASK
-
-                when (strategy) {
-                    ConflictStrategy.ASK -> {
-                        if (newIngredients.isNotEmpty()) {
-                            val result = storeRepository.addIngredientsToShoppingList(storeId, newIngredients)
-                            if (result is Result.Error) {
-                                _uiState.value = _uiState.value.copy(
-                                    snackbarMessage = "Error adding ingredients: ${result.exception.message}"
-                                )
-                                return@launch
-                            }
-                        }
-
-                        if (duplicates.isNotEmpty()) {
-                            _uiState.value = _uiState.value.copy(
-                                conflictQueue = duplicates,
-                                totalRecipeConflicts = duplicates.size,
-                                currentRecipeConflict = duplicates.first(),
-                                showRecipeConflictDialog = true
-                            )
-                        } else {
-                            _uiState.value = _uiState.value.copy(
-                                snackbarMessage = "Added ${newIngredients.size} ingredients from \"${recipe.name}\""
-                            )
-                        }
-                    }
-
-                    ConflictStrategy.IGNORE -> {
-                        if (newIngredients.isEmpty()) {
-                            _uiState.value = _uiState.value.copy(
-                                snackbarMessage = "All ingredients from \"${recipe.name}\" are already in your list"
-                            )
-                        } else {
-                            val result = storeRepository.addIngredientsToShoppingList(storeId, newIngredients)
-                            if (result is Result.Error) {
-                                _uiState.value = _uiState.value.copy(
-                                    snackbarMessage = "Error adding ingredients: ${result.exception.message}"
-                                )
-                            } else {
-                                _uiState.value = _uiState.value.copy(
-                                    snackbarMessage = if (duplicates.isNotEmpty()) {
-                                        "Added ${newIngredients.size} new, ignored ${duplicates.size} duplicates"
-                                    } else {
-                                        "Added ${newIngredients.size} ingredients from \"${recipe.name}\""
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    ConflictStrategy.INCREASE -> {
-                        if (newIngredients.isNotEmpty()) {
-                            val result = storeRepository.addIngredientsToShoppingList(storeId, newIngredients)
-                            if (result is Result.Error) {
-                                _uiState.value = _uiState.value.copy(
-                                    snackbarMessage = "Error adding ingredients: ${result.exception.message}"
-                                )
-                                return@launch
-                            }
-                        }
-                        duplicates.forEach { conflict ->
-                            val combined = combineQuantities(
-                                conflict.existingIngredient.quantity,
-                                conflict.recipeIngredient.quantity ?: ""
-                            )
-                            storeRepository.updateIngredient(
-                                storeId,
-                                conflict.existingIngredient.copy(quantity = combined)
-                            )
-                        }
-                        _uiState.value = _uiState.value.copy(
-                            snackbarMessage = "Added ${newIngredients.size} new, increased ${duplicates.size} existing quantities"
-                        )
-                    }
-
-                    ConflictStrategy.REPLACE -> {
-                        if (newIngredients.isNotEmpty()) {
-                            val result = storeRepository.addIngredientsToShoppingList(storeId, newIngredients)
-                            if (result is Result.Error) {
-                                _uiState.value = _uiState.value.copy(
-                                    snackbarMessage = "Error adding ingredients: ${result.exception.message}"
-                                )
-                                return@launch
-                            }
-                        }
-                        duplicates.forEach { conflict ->
-                            storeRepository.updateIngredient(
-                                storeId,
-                                conflict.existingIngredient.copy(
-                                    quantity = conflict.recipeIngredient.quantity ?: "",
-                                    addedBy = recipe.id,
-                                    addedAt = System.currentTimeMillis()
-                                )
-                            )
-                        }
-                        _uiState.value = _uiState.value.copy(
-                            snackbarMessage = "Added ${newIngredients.size} new, replaced ${duplicates.size} existing"
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("StoreViewModel", "Error adding recipe: ${e.message}", e)
-                _uiState.value = _uiState.value.copy(
-                    snackbarMessage = "Error adding recipe: ${e.message}"
-                )
+                storeRepository.addStarredIngredientToList(storeId, starred, existing, strategy, currentList)
             } finally {
-                _uiState.value = _uiState.value.copy(isAddingRecipe = false)
+                _uiState.value = _uiState.value.copy(
+                    pendingStarredAdds = _uiState.value.pendingStarredAdds - starredId
+                )
             }
         }
     }
 
-    fun addStarredIngredientToList(starredId: String) {
-        viewModelScope.launch {
-            val starred = _uiState.value.starredIngredients.find { it.id == starredId } ?: return@launch
-
-            val existing = (_uiState.value.shoppingListItems + _uiState.value.boughtItems).find {
-                it.name.equals(starred.name, ignoreCase = true)
-            }
-
-            when {
-                existing == null -> {
-                    storeRepository.addIngredientToShoppingList(
-                        storeId,
-                        Ingredient(
-                            id = UUID.randomUUID().toString(),
-                            name = starred.name,
-                            quantity = starred.defaultQuantity,
-                            bought = false,
-                            addedBy = starred.id,
-                            addedAt = System.currentTimeMillis()
-                        )
-                    )
-                }
-                starred.conflictStrategy == ConflictStrategy.ASK.name -> {
-                    _uiState.value = _uiState.value.copy(
-                        showConflictDialog = true,
-                        conflictStarred = starred,
-                        conflictExisting = existing
-                    )
-                }
-                else -> {
-                    val strategy = runCatching {
-                        ConflictStrategy.valueOf(starred.conflictStrategy)
-                    }.getOrDefault(ConflictStrategy.ASK)
-
-                    if (strategy == ConflictStrategy.ASK) {
-                        _uiState.value = _uiState.value.copy(
-                            showConflictDialog = true,
-                            conflictStarred = starred,
-                            conflictExisting = existing
-                        )
-                    } else {
-                        try {
-                            applyConflictStrategy(starred, existing, strategy)
-                            val message = when (strategy) {
-                                ConflictStrategy.REPLACE -> "\"${starred.name}\" quantity replaced"
-                                ConflictStrategy.IGNORE -> "\"${starred.name}\" already in list, skipped"
-                                ConflictStrategy.INCREASE -> "\"${starred.name}\" quantity increased"
-                                ConflictStrategy.ASK -> null
-                            }
-                            if (message != null) {
-                                _uiState.value = _uiState.value.copy(snackbarMessage = message)
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.e("StoreViewModel", "addStarredIngredientToList error: ${e.message}", e)
-                            _uiState.value = _uiState.value.copy(snackbarMessage = "Failed to update \"${starred.name}\"")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Close the dialog immediately (optimistic), then apply the strategy and optionally
-     * persist the preference. This prevents the dialog from staying open if a network
-     * call inside the coroutine throws.
-     */
     fun resolveConflict(strategy: ConflictStrategy, remember: Boolean) {
         val starred = _uiState.value.conflictStarred ?: return
         val existing = _uiState.value.conflictExisting ?: return
+        val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
+        val currentStarred = _uiState.value.starredIngredients
 
-        // Dismiss the dialog right away so the UI is never stuck waiting on a network call.
+        val optimisticList: List<Ingredient> = when (strategy) {
+            ConflictStrategy.IGNORE -> currentList
+            ConflictStrategy.INCREASE -> currentList.map { item ->
+                if (item.id == existing.id) item.copy(quantity = combineQuantities(item.quantity, starred.defaultQuantity))
+                else item
+            }
+            ConflictStrategy.REPLACE -> currentList.map { item ->
+                if (item.id == existing.id) item.copy(quantity = starred.defaultQuantity, addedBy = starred.id, addedAt = System.currentTimeMillis())
+                else item
+            }
+            ConflictStrategy.ASK -> currentList
+        }
+
+        val successMessage = when (strategy) {
+            ConflictStrategy.REPLACE -> "\"${starred.name}\" quantity replaced"
+            ConflictStrategy.IGNORE -> "\"${starred.name}\" already in list, skipped"
+            ConflictStrategy.INCREASE -> "\"${starred.name}\" quantity increased"
+            ConflictStrategy.ASK -> null
+        }.let { base -> if (remember && base != null) "$base — preference saved" else base }
+
+        // Optimistic update
         _uiState.value = _uiState.value.copy(
             showConflictDialog = false,
             conflictStarred = null,
-            conflictExisting = null
+            conflictExisting = null,
+            shoppingListItems = optimisticList.filter { !it.bought },
+            boughtItems = optimisticList.filter { it.bought },
+            snackbarMessage = successMessage,
+            pendingStarredAdds = _uiState.value.pendingStarredAdds + starred.id
         )
-
+        syncCache()
         viewModelScope.launch {
             try {
                 if (remember) {
                     storeRepository.updateStarredIngredient(
                         storeId,
-                        starred.copy(conflictStrategy = strategy.name)
+                        starred.copy(conflictStrategy = strategy.name),
+                        currentStarred
                     )
                 }
-                applyConflictStrategy(starred, existing, strategy)
-                if (remember) {
-                    _uiState.value = _uiState.value.copy(
-                        snackbarMessage = "Preference saved for \"${starred.name}\""
-                    )
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("StoreViewModel", "resolveConflict error: ${e.message}", e)
+                storeRepository.addStarredIngredientToList(storeId, starred, existing, strategy, currentList)
+            } finally {
                 _uiState.value = _uiState.value.copy(
-                    error = "Failed to apply change: ${e.message}"
+                    pendingStarredAdds = _uiState.value.pendingStarredAdds - starred.id
                 )
             }
         }
@@ -504,51 +386,119 @@ class StoreViewModel @Inject constructor(
         )
     }
 
-    fun clearSnackbar() {
-        _uiState.value = _uiState.value.copy(snackbarMessage = null)
+    // ─── Recipe → list ────────────────────────────────────────────────────────
+
+    fun addRecipeToShoppingList(recipeId: String) {
+        if (_uiState.value.isAddingRecipe) return
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isAddingRecipe = true)
+            try {
+                val recipe = _uiState.value.recipes.find { it.id == recipeId } ?: return@launch
+                val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
+
+                val recipeStrategy = recipe.conflictStrategy
+                    ?.let { runCatching { ConflictStrategy.valueOf(it) }.getOrNull() }
+                    ?: ConflictStrategy.ASK
+
+                if (recipeStrategy != ConflictStrategy.ASK) {
+                    val allResolutions = recipe.ingredients.associate { it.name to recipeStrategy }
+                    val optimisticList = applyResolutionsLocally(recipe, currentList, allResolutions)
+                    _uiState.value = _uiState.value.copy(
+                        shoppingListItems = optimisticList.filter { !it.bought },
+                        boughtItems = optimisticList.filter { it.bought },
+                        snackbarMessage = "Added ingredients from \"${recipe.name}\""
+                    )
+                    syncCache()
+                    storeRepository.addRecipeIngredientsToList(storeId, recipe, currentList, allResolutions)
+                    return@launch
+                }
+
+                // ASK: split conflicts from non-conflicts
+                val existingMap = currentList.associateBy { it.name.lowercase() }
+                val conflicts = recipe.ingredients.mapNotNull { ri ->
+                    existingMap[ri.name.lowercase()]?.let { RecipeConflict(ri, it, recipe.id, recipe.name) }
+                }
+                val nonConflicting = recipe.ingredients.filter { existingMap[it.name.lowercase()] == null }
+
+                // Add non-conflicting ingredients optimistically right now
+                if (nonConflicting.isNotEmpty()) {
+                    val newItems = nonConflicting.map { ri ->
+                        Ingredient(
+                            id = UUID.randomUUID().toString(),
+                            name = ri.name,
+                            quantity = ri.quantity ?: "",
+                            bought = false,
+                            addedBy = recipe.id,
+                            addedAt = System.currentTimeMillis()
+                        )
+                    }
+                    _uiState.value = _uiState.value.copy(
+                        shoppingListItems = _uiState.value.shoppingListItems + newItems
+                    )
+                    syncCache()
+                    storeRepository.addRecipeIngredientsToList(
+                        storeId, recipe.copy(ingredients = nonConflicting), currentList, emptyMap()
+                    )
+                }
+
+                if (conflicts.isEmpty()) {
+                    _uiState.value = _uiState.value.copy(
+                        snackbarMessage = "Added ${nonConflicting.size} ingredients from \"${recipe.name}\""
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        conflictQueue = conflicts,
+                        totalRecipeConflicts = conflicts.size,
+                        currentRecipeConflict = conflicts.first(),
+                        showRecipeConflictDialog = true,
+                        pendingRecipeId = recipeId
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("StoreViewModel", "addRecipeToShoppingList error: ${e.message}", e)
+                _uiState.value = _uiState.value.copy(snackbarMessage = "Error: ${e.message}")
+            } finally {
+                _uiState.value = _uiState.value.copy(isAddingRecipe = false)
+            }
+        }
     }
 
     fun resolveRecipeConflict(strategy: ConflictStrategy, applyToAll: Boolean) {
         val current = _uiState.value.currentRecipeConflict ?: return
         val remaining = _uiState.value.conflictQueue.drop(1)
+        val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
 
-        // Dismiss the current dialog entry immediately before any async work.
-        if (applyToAll || remaining.isEmpty()) {
-            _uiState.value = _uiState.value.copy(
-                showRecipeConflictDialog = false,
-                currentRecipeConflict = null,
-                conflictQueue = emptyList(),
-                totalRecipeConflicts = 0
-            )
-        } else {
-            _uiState.value = _uiState.value.copy(
-                conflictQueue = remaining,
-                currentRecipeConflict = remaining.first()
-            )
+        val toResolve = if (applyToAll) listOf(current) + remaining else listOf(current)
+        val resolutions = toResolve.associate { it.recipeIngredient.name to strategy }
+
+        // Optimistic update for resolved conflicts
+        val miniRecipe = Recipe(
+            id = current.recipeId,
+            name = current.recipeName,
+            ingredients = toResolve.map { it.recipeIngredient }
+        )
+        val optimisticList = applyResolutionsLocally(miniRecipe, currentList, resolutions)
+
+        val snackbar = when {
+            applyToAll -> "Applied to all ${toResolve.size} duplicates"
+            remaining.isEmpty() -> "All duplicates resolved"
+            else -> null
         }
 
+        _uiState.value = _uiState.value.copy(
+            shoppingListItems = optimisticList.filter { !it.bought },
+            boughtItems = optimisticList.filter { it.bought },
+            snackbarMessage = snackbar,
+            showRecipeConflictDialog = if (applyToAll || remaining.isEmpty()) false else true,
+            currentRecipeConflict = if (applyToAll || remaining.isEmpty()) null else remaining.first(),
+            conflictQueue = if (applyToAll || remaining.isEmpty()) emptyList() else remaining,
+            totalRecipeConflicts = if (applyToAll || remaining.isEmpty()) 0 else _uiState.value.totalRecipeConflicts,
+            pendingRecipeId = if (applyToAll || remaining.isEmpty()) null else _uiState.value.pendingRecipeId
+        )
+        syncCache()
         viewModelScope.launch {
-            try {
-                applyRecipeConflictStrategy(current, strategy)
-
-                if (applyToAll && remaining.isNotEmpty()) {
-                    remaining.forEach { conflict ->
-                        applyRecipeConflictStrategy(conflict, strategy)
-                    }
-                    _uiState.value = _uiState.value.copy(
-                        snackbarMessage = "Applied to all ${remaining.size + 1} duplicates"
-                    )
-                } else if (remaining.isEmpty()) {
-                    _uiState.value = _uiState.value.copy(
-                        snackbarMessage = "All duplicates resolved"
-                    )
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("StoreViewModel", "resolveRecipeConflict error: ${e.message}", e)
-                _uiState.value = _uiState.value.copy(
-                    error = "Failed to apply change: ${e.message}"
-                )
-            }
+            storeRepository.addRecipeIngredientsToList(storeId, miniRecipe, currentList, resolutions)
         }
     }
 
@@ -559,153 +509,95 @@ class StoreViewModel @Inject constructor(
             currentRecipeConflict = null,
             conflictQueue = emptyList(),
             totalRecipeConflicts = 0,
+            pendingRecipeId = null,
             snackbarMessage = if (remaining > 0) "$remaining duplicate(s) skipped" else null
         )
     }
 
-    private suspend fun applyRecipeConflictStrategy(conflict: RecipeConflict, strategy: ConflictStrategy) {
-        when (strategy) {
-            ConflictStrategy.IGNORE -> Unit
-            ConflictStrategy.INCREASE -> {
-                val combined = combineQuantities(
-                    conflict.existingIngredient.quantity,
-                    conflict.recipeIngredient.quantity ?: ""
-                )
-                storeRepository.updateIngredient(
-                    storeId,
-                    conflict.existingIngredient.copy(quantity = combined)
-                )
-            }
-            ConflictStrategy.REPLACE -> {
-                storeRepository.updateIngredient(
-                    storeId,
-                    conflict.existingIngredient.copy(
-                        quantity = conflict.recipeIngredient.quantity ?: "",
-                        addedBy = conflict.recipeId,
-                        addedAt = System.currentTimeMillis()
-                    )
-                )
-            }
-            ConflictStrategy.ASK -> Unit
+    // ─── Create recipe ────────────────────────────────────────────────────────
+
+    fun addRecipe(name: String, ingredients: List<Pair<String, String>>, periodicity: Int?) {
+        val recipe = Recipe(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            ingredients = ingredients.map { (n, qty) -> RecipeIngredient(name = n, quantity = qty) },
+            periodicity = periodicity,
+            conflictStrategy = null,
+            lastAddedWeek = null
+        )
+        // Optimistic update
+        _uiState.value = _uiState.value.copy(recipes = _uiState.value.recipes + recipe)
+        syncCache()
+        viewModelScope.launch {
+            storeRepository.addRecipe(storeId, recipe)
         }
     }
 
-    private suspend fun applyConflictStrategy(
-        starred: StarredIngredient,
-        existing: Ingredient,
-        strategy: ConflictStrategy
-    ) {
-        when (strategy) {
-            ConflictStrategy.REPLACE -> {
-                storeRepository.updateIngredient(
-                    storeId,
-                    existing.copy(
-                        quantity = starred.defaultQuantity,
-                        addedBy = starred.id,
-                        addedAt = System.currentTimeMillis()
-                    )
-                )
-            }
-            ConflictStrategy.IGNORE -> Unit
-            ConflictStrategy.INCREASE -> {
-                val newQuantity = combineQuantities(existing.quantity, starred.defaultQuantity)
-                storeRepository.updateIngredient(storeId, existing.copy(quantity = newQuantity))
-            }
-            ConflictStrategy.ASK -> Unit
-        }
-    }
-
-    private fun combineQuantities(qty1: String, qty2: String): String {
-        if (qty1.isBlank()) return qty2
-        if (qty2.isBlank()) return qty1
-
-        val num1 = qty1.trim().toDoubleOrNull()
-        val num2 = qty2.trim().toDoubleOrNull()
-
-        return if (num1 != null && num2 != null) {
-            val sum = num1 + num2
-            if (sum == sum.toLong().toDouble()) sum.toLong().toString() else sum.toString()
-        } else {
-            "${qty1.trim()} + ${qty2.trim()}"
-        }
-    }
+    // ─── Shopping list mutations ──────────────────────────────────────────────
 
     fun markIngredientAsBought(ingredientId: String) {
-        val ingredient = _uiState.value.shoppingListItems.find { it.id == ingredientId }
-        if (ingredient != null) {
-            _uiState.value = _uiState.value.copy(
-                shoppingListItems = _uiState.value.shoppingListItems.filter { it.id != ingredientId },
-                boughtItems = _uiState.value.boughtItems + ingredient.copy(bought = true)
-            )
-        }
+        val ingredient = _uiState.value.shoppingListItems.find { it.id == ingredientId } ?: return
+        val newList = (_uiState.value.shoppingListItems + _uiState.value.boughtItems)
+            .map { if (it.id == ingredientId) it.copy(bought = true) else it }
+        _uiState.value = _uiState.value.copy(
+            shoppingListItems = _uiState.value.shoppingListItems.filter { it.id != ingredientId },
+            boughtItems = _uiState.value.boughtItems + ingredient.copy(bought = true)
+        )
+        syncCache()
         viewModelScope.launch {
-            try {
-                storeRepository.markIngredientAsBought(storeId, ingredientId, true)
-            } catch (e: Exception) {
-                android.util.Log.e("StoreViewModel", "markIngredientAsBought failed: ${e.message}", e)
-            }
+            storeRepository.markIngredientAsBought(storeId, ingredientId, true, newList)
         }
     }
 
     fun markIngredientAsNotBought(ingredientId: String) {
-        val ingredient = _uiState.value.boughtItems.find { it.id == ingredientId }
-        if (ingredient != null) {
-            _uiState.value = _uiState.value.copy(
-                boughtItems = _uiState.value.boughtItems.filter { it.id != ingredientId },
-                shoppingListItems = _uiState.value.shoppingListItems + ingredient.copy(bought = false)
-            )
-        }
+        val ingredient = _uiState.value.boughtItems.find { it.id == ingredientId } ?: return
+        val newList = (_uiState.value.shoppingListItems + _uiState.value.boughtItems)
+            .map { if (it.id == ingredientId) it.copy(bought = false) else it }
+        _uiState.value = _uiState.value.copy(
+            boughtItems = _uiState.value.boughtItems.filter { it.id != ingredientId },
+            shoppingListItems = _uiState.value.shoppingListItems + ingredient.copy(bought = false)
+        )
+        syncCache()
         viewModelScope.launch {
-            try {
-                storeRepository.markIngredientAsBought(storeId, ingredientId, false)
-            } catch (e: Exception) {
-                android.util.Log.e("StoreViewModel", "markIngredientAsNotBought failed: ${e.message}", e)
-            }
+            storeRepository.markIngredientAsBought(storeId, ingredientId, false, newList)
         }
     }
 
     fun deleteIngredient(ingredientId: String) {
+        val newList = (_uiState.value.shoppingListItems + _uiState.value.boughtItems)
+            .filter { it.id != ingredientId }
         _uiState.value = _uiState.value.copy(
-            shoppingListItems = _uiState.value.shoppingListItems.filter { it.id != ingredientId },
-            boughtItems = _uiState.value.boughtItems.filter { it.id != ingredientId }
+            shoppingListItems = newList.filter { !it.bought },
+            boughtItems = newList.filter { it.bought }
         )
+        syncCache()
         viewModelScope.launch {
-            try {
-                storeRepository.deleteIngredient(storeId, ingredientId)
-            } catch (e: Exception) {
-                android.util.Log.e("StoreViewModel", "deleteIngredient failed: ${e.message}", e)
-            }
+            storeRepository.deleteIngredient(storeId, ingredientId, newList)
         }
     }
 
-    fun deleteStarredIngredient(starredId: String) {
-        viewModelScope.launch {
-            storeRepository.deleteStarredIngredient(storeId, starredId)
-        }
-    }
+    fun updateIngredient(
+        ingredientId: String,
+        name: String,
+        quantity: String,
+        isStarred: Boolean,
+        periodicity: Int?,
+        conflictStrategy: ConflictStrategy = ConflictStrategy.ASK
+    ) {
+        val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
+        val currentStarred = _uiState.value.starredIngredients
+        val current = currentList.find { it.id == ingredientId } ?: return
+        val updated = current.copy(name = name, quantity = quantity)
 
-    fun updateStarredIngredient(starredId: String, name: String, quantity: String, periodicity: Int?, conflictStrategy: ConflictStrategy) {
+        // Optimistic update for the ingredient in the list
+        val newList = currentList.map { if (it.id == ingredientId) updated else it }
+        _uiState.value = _uiState.value.copy(
+            shoppingListItems = newList.filter { !it.bought },
+            boughtItems = newList.filter { it.bought }
+        )
+        syncCache()
         viewModelScope.launch {
-            val starred = _uiState.value.starredIngredients.find { it.id == starredId } ?: return@launch
-            val result = storeRepository.updateStarredIngredient(
-                storeId,
-                starred.copy(name = name, defaultQuantity = quantity, periodicity = periodicity, conflictStrategy = conflictStrategy.name)
-            )
-            if (result is Result.Error) {
-                android.util.Log.e("StoreViewModel", "updateStarredIngredient failed: ${result.exception.message}", result.exception)
-                _uiState.value = _uiState.value.copy(snackbarMessage = "Failed to save changes: ${result.exception.message}")
-            }
-        }
-    }
-
-    fun updateIngredient(ingredientId: String, name: String, quantity: String, isStarred: Boolean, periodicity: Int?, conflictStrategy: ConflictStrategy = ConflictStrategy.ASK) {
-        viewModelScope.launch {
-            val current = _uiState.value.shoppingListItems.find { it.id == ingredientId }
-                ?: _uiState.value.boughtItems.find { it.id == ingredientId }
-                ?: return@launch
-
-            val updated = current.copy(name = name, quantity = quantity)
-            storeRepository.updateIngredient(storeId, updated)
+            storeRepository.updateIngredient(storeId, updated, currentList)
 
             if (isStarred) {
                 if (current.addedBy == "manual") {
@@ -717,49 +609,173 @@ class StoreViewModel @Inject constructor(
                         conflictStrategy = conflictStrategy.name,
                         lastAddedWeek = null
                     )
+                    // Optimistic update for new starred ingredient
+                    _uiState.value = _uiState.value.copy(
+                        starredIngredients = _uiState.value.starredIngredients + starred
+                    )
                     storeRepository.addStarredIngredient(storeId, starred)
-                    storeRepository.updateIngredient(storeId, updated.copy(addedBy = starred.id))
+                    storeRepository.updateIngredient(storeId, updated.copy(addedBy = starred.id), currentList)
                 } else {
-                    val starred = _uiState.value.starredIngredients.find { it.id == current.addedBy }
+                    val starred = currentStarred.find { it.id == current.addedBy }
                     if (starred != null) {
-                        storeRepository.updateStarredIngredient(
-                            storeId,
-                            starred.copy(name = name, periodicity = periodicity, defaultQuantity = quantity, conflictStrategy = conflictStrategy.name)
+                        val updatedStarred = starred.copy(
+                            name = name,
+                            periodicity = periodicity,
+                            defaultQuantity = quantity,
+                            conflictStrategy = conflictStrategy.name
                         )
+                        // Optimistic update for existing starred ingredient
+                        _uiState.value = _uiState.value.copy(
+                            starredIngredients = currentStarred.map { if (it.id == starred.id) updatedStarred else it }
+                        )
+                        storeRepository.updateStarredIngredient(storeId, updatedStarred, currentStarred)
                     }
                 }
             } else {
                 if (current.addedBy != "manual") {
-                    storeRepository.deleteStarredIngredient(storeId, current.addedBy)
-                    storeRepository.updateIngredient(storeId, updated.copy(addedBy = "manual"))
+                    // Optimistic update: remove from starred
+                    _uiState.value = _uiState.value.copy(
+                        starredIngredients = currentStarred.filter { it.id != current.addedBy }
+                    )
+                    storeRepository.deleteStarredIngredient(storeId, current.addedBy, currentStarred)
+                    storeRepository.updateIngredient(storeId, updated.copy(addedBy = "manual"), currentList)
                 }
             }
         }
     }
 
-    fun deleteRecipe(recipeId: String) {
+    // ─── Starred mutations ────────────────────────────────────────────────────
+
+    fun updateStarredIngredient(
+        starredId: String,
+        name: String,
+        quantity: String,
+        periodicity: Int?,
+        conflictStrategy: ConflictStrategy
+    ) {
+        val currentStarred = _uiState.value.starredIngredients
+        val starred = currentStarred.find { it.id == starredId } ?: return
+        val updatedStarred = starred.copy(
+            name = name,
+            defaultQuantity = quantity,
+            periodicity = periodicity,
+            conflictStrategy = conflictStrategy.name
+        )
+        // Optimistic update — UI reflects change before Firestore responds
+        _uiState.value = _uiState.value.copy(
+            starredIngredients = currentStarred.map { if (it.id == starredId) updatedStarred else it }
+        )
+        syncCache()
         viewModelScope.launch {
-            storeRepository.deleteRecipe(storeId, recipeId)
+            storeRepository.updateStarredIngredient(storeId, updatedStarred, currentStarred)
         }
     }
 
-    fun updateStoreName(newName: String) {
+    fun deleteStarredIngredient(starredId: String) {
+        val currentStarred = _uiState.value.starredIngredients
+        // Optimistic update
+        _uiState.value = _uiState.value.copy(
+            starredIngredients = currentStarred.filter { it.id != starredId }
+        )
+        syncCache()
         viewModelScope.launch {
-            storeRepository.updateStoreName(storeId, newName)
+            storeRepository.deleteStarredIngredient(storeId, starredId, currentStarred)
         }
+    }
+
+    // ─── Recipe mutations ─────────────────────────────────────────────────────
+
+    fun deleteRecipe(recipeId: String) {
+        val currentRecipes = _uiState.value.recipes
+        // Optimistic update
+        _uiState.value = _uiState.value.copy(recipes = currentRecipes.filter { it.id != recipeId })
+        syncCache()
+        viewModelScope.launch {
+            storeRepository.deleteRecipe(storeId, recipeId, currentRecipes)
+        }
+    }
+
+    // ─── Store mutations ──────────────────────────────────────────────────────
+
+    fun updateStoreName(newName: String) {
+        viewModelScope.launch { storeRepository.updateStoreName(storeId, newName) }
     }
 
     fun deleteStore() {
-        viewModelScope.launch {
-            storeRepository.deleteStore(storeId)
+        viewModelScope.launch { storeRepository.deleteStore(storeId) }
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    // Applies conflict resolutions locally to produce the optimistic list,
+    // mirroring exactly what StoreRepositoryImpl.addRecipeIngredientsToList does.
+    private fun applyResolutionsLocally(
+        recipe: Recipe,
+        currentList: List<Ingredient>,
+        resolutions: Map<String, ConflictStrategy>
+    ): List<Ingredient> {
+        val existingMap = currentList.associateBy { it.name.lowercase() }
+        val toAdd = mutableListOf<Ingredient>()
+        val toUpdate = mutableListOf<Ingredient>()
+
+        recipe.ingredients.forEach { ri ->
+            val existing = existingMap[ri.name.lowercase()]
+            if (existing == null) {
+                toAdd.add(
+                    Ingredient(
+                        id = UUID.randomUUID().toString(),
+                        name = ri.name,
+                        quantity = ri.quantity ?: "",
+                        bought = false,
+                        addedBy = recipe.id,
+                        addedAt = System.currentTimeMillis()
+                    )
+                )
+            } else {
+                when (resolutions[ri.name] ?: ConflictStrategy.IGNORE) {
+                    ConflictStrategy.IGNORE -> Unit
+                    ConflictStrategy.INCREASE -> toUpdate.add(
+                        existing.copy(quantity = combineQuantities(existing.quantity, ri.quantity ?: ""))
+                    )
+                    ConflictStrategy.REPLACE -> toUpdate.add(
+                        existing.copy(quantity = ri.quantity ?: "", addedBy = recipe.id, addedAt = System.currentTimeMillis())
+                    )
+                    ConflictStrategy.ASK -> Unit
+                }
+            }
         }
+
+        return currentList.map { existing ->
+            toUpdate.find { it.id == existing.id } ?: existing
+        } + toAdd
     }
 
-    fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+    private fun combineQuantities(qty1: String, qty2: String): String {
+        if (qty1.isBlank()) return qty2
+        if (qty2.isBlank()) return qty1
+        val num1 = qty1.trim().toDoubleOrNull()
+        val num2 = qty2.trim().toDoubleOrNull()
+        return if (num1 != null && num2 != null) {
+            val sum = num1 + num2
+            if (sum == sum.toLong().toDouble()) sum.toLong().toString() else sum.toString()
+        } else "${qty1.trim()} + ${qty2.trim()}"
     }
 
-    fun retryLoad() {
-        loadStore()
+    // ─── UI helpers ───────────────────────────────────────────────────────────
+
+    fun clearError() { _uiState.value = _uiState.value.copy(error = null) }
+    fun clearSnackbar() { _uiState.value = _uiState.value.copy(snackbarMessage = null) }
+
+    // Rebuilds the cached Store from current UI state so the next open is instant and correct.
+    private fun syncCache() {
+        val current = _uiState.value
+        val store = current.store ?: return
+        storeCache.put(
+            store.copy(
+                shoppingList = current.shoppingListItems + current.boughtItems,
+                starredIngredients = current.starredIngredients,
+                recipes = current.recipes
+            )
+        )
     }
 }

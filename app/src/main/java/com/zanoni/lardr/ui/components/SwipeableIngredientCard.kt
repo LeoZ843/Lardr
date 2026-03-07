@@ -52,10 +52,10 @@ fun SwipeableIngredientCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    if (offsetX.value > 0)
+                    //if (offsetX.value > 0)
                         MaterialTheme.colorScheme.tertiary
-                    else
-                        MaterialTheme.colorScheme.error
+                    //else
+                        //MaterialTheme.colorScheme.error
                 )
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically

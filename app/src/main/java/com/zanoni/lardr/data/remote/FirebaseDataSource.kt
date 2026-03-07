@@ -23,51 +23,127 @@ class FirebaseDataSource @Inject constructor(
 ) {
     private val TAG = "FirebaseDataSource"
 
-    suspend fun signIn(email: String, password: String): FirebaseUser? {
-        val result = auth.signInWithEmailAndPassword(email, password).await()
-        return result.user
-    }
+    // ─── Auth ─────────────────────────────────────────────────────────────────
 
-    suspend fun signInWithGoogle(idToken: String): FirebaseUser? {
-        val credential = GoogleAuthProvider.getCredential(idToken, null)
-        val result = auth.signInWithCredential(credential).await()
-        return result.user
-    }
+    suspend fun signIn(email: String, password: String): FirebaseUser? =
+        auth.signInWithEmailAndPassword(email, password).await().user
 
-    suspend fun signUp(email: String, password: String): FirebaseUser? {
-        val result = auth.createUserWithEmailAndPassword(email, password).await()
-        return result.user
-    }
+    suspend fun signInWithGoogle(idToken: String): FirebaseUser? =
+        auth.signInWithCredential(GoogleAuthProvider.getCredential(idToken, null)).await().user
 
-    fun signOut() {
-        auth.signOut()
-    }
+    suspend fun signUp(email: String, password: String): FirebaseUser? =
+        auth.createUserWithEmailAndPassword(email, password).await().user
 
-    fun getCurrentUser(): FirebaseUser? {
-        return auth.currentUser
-    }
+    fun signOut() = auth.signOut()
+
+    fun getCurrentUser(): FirebaseUser? = auth.currentUser
 
     suspend fun sendPasswordResetEmail(email: String) {
         auth.sendPasswordResetEmail(email).await()
     }
 
     fun observeAuthState(): Flow<FirebaseUser?> = callbackFlow {
-        val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-            trySend(firebaseAuth.currentUser)
-        }
+        val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
         auth.addAuthStateListener(listener)
         awaitClose { auth.removeAuthStateListener(listener) }
     }
 
-    suspend fun <T : Any> mergeDocument(
-        collection: String,
-        documentId: String,
-        data: T
-    ) {
-        firestore.collection(collection)
-            .document(documentId)
-            .set(data, SetOptions.merge())
+    // ─── Awaiting writes (AuthRepository / UserRepository) ───────────────────
+    // These paths are intentionally awaited because the caller needs confirmation
+    // before proceeding (e.g. user must exist before navigating to home screen).
+
+    suspend fun <T : Any> mergeDocument(collection: String, documentId: String, data: T) {
+        firestore.collection(collection).document(documentId)
+            .set(data, SetOptions.merge()).await()
+    }
+
+    suspend fun setDocument(collection: String, documentId: String, data: Any) {
+        firestore.collection(collection).document(documentId).set(data).await()
+    }
+
+    suspend fun updateDocument(collection: String, documentId: String, updates: Map<String, Any>) {
+        Log.d(TAG, "updateDocument $collection/$documentId with ${updates.keys}")
+        firestore.collection(collection).document(documentId).update(updates).await()
+        Log.d(TAG, "updateDocument completed $collection/$documentId")
+    }
+
+    suspend fun deleteDocument(collection: String, documentId: String) {
+        firestore.collection(collection).document(documentId).delete().await()
+    }
+
+    suspend fun addArrayValue(collection: String, documentId: String, field: String, value: Any) {
+        firestore.collection(collection).document(documentId)
+            .update(field, com.google.firebase.firestore.FieldValue.arrayUnion(value)).await()
+    }
+
+    suspend fun removeArrayValue(collection: String, documentId: String, field: String, value: Any) {
+        firestore.collection(collection).document(documentId)
+            .update(field, com.google.firebase.firestore.FieldValue.arrayRemove(value)).await()
+    }
+
+    suspend fun addArrayValueWithMerge(collection: String, documentId: String, field: String, value: Any) {
+        firestore.collection(collection).document(documentId)
+            .set(mapOf(field to com.google.firebase.firestore.FieldValue.arrayUnion(value)), SetOptions.merge())
             .await()
+    }
+
+    // ─── Fire-and-forget writes (StoreRepository) ────────────────────────────
+    // Return immediately after submitting to the local Firestore cache.
+    // The local cache is updated synchronously so observeStore fires instantly
+    // with a pending-write snapshot. Server sync happens in the background;
+    // on server rejection Firestore rolls back and observeStore reverts.
+
+    fun setDocumentAsync(collection: String, documentId: String, data: Any) {
+        firestore.collection(collection).document(documentId).set(data)
+            .addOnFailureListener { e ->
+                Log.e(TAG, "setDocumentAsync failed $collection/$documentId: ${e.message}")
+            }
+    }
+
+    fun updateDocumentAsync(collection: String, documentId: String, updates: Map<String, Any>) {
+        Log.d(TAG, "updateDocumentAsync $collection/$documentId with ${updates.keys}")
+        firestore.collection(collection).document(documentId).update(updates)
+            .addOnSuccessListener {
+                Log.d(TAG, "updateDocumentAsync confirmed $collection/$documentId")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "updateDocumentAsync failed $collection/$documentId: ${e.message}")
+            }
+    }
+
+    fun deleteDocumentAsync(collection: String, documentId: String) {
+        firestore.collection(collection).document(documentId).delete()
+            .addOnFailureListener { e ->
+                Log.e(TAG, "deleteDocumentAsync failed $collection/$documentId: ${e.message}")
+            }
+    }
+
+    fun addArrayValueAsync(collection: String, documentId: String, field: String, value: Any) {
+        Log.d(TAG, "addArrayValueAsync $collection/$documentId field $field")
+        firestore.collection(collection).document(documentId)
+            .update(field, com.google.firebase.firestore.FieldValue.arrayUnion(value))
+            .addOnFailureListener { e ->
+                Log.e(TAG, "addArrayValueAsync failed $collection/$documentId.$field: ${e.message}")
+            }
+    }
+
+    fun removeArrayValueAsync(collection: String, documentId: String, field: String, value: Any) {
+        firestore.collection(collection).document(documentId)
+            .update(field, com.google.firebase.firestore.FieldValue.arrayRemove(value))
+            .addOnFailureListener { e ->
+                Log.e(TAG, "removeArrayValueAsync failed $collection/$documentId.$field: ${e.message}")
+            }
+    }
+
+    // ─── Reads ────────────────────────────────────────────────────────────────
+
+    suspend fun <T : Any> getDocument(collection: String, documentId: String, clazz: Class<T>): T? {
+        return try {
+            firestore.collection(collection).document(documentId).get().await().toObject(clazz)
+        } catch (e: Exception) {
+            Log.e(TAG, "getDocument error $collection/$documentId: ${e.message}", e)
+            null
+        }
     }
 
     suspend fun <T : Any> queryDocuments(
@@ -77,11 +153,8 @@ class FirebaseDataSource @Inject constructor(
         clazz: Class<T>
     ): List<T> {
         return firestore.collection(collection)
-            .whereEqualTo(field, value)
-            .get()
-            .await()
-            .documents
-            .mapNotNull { it.toObject(clazz) }
+            .whereEqualTo(field, value).get().await()
+            .documents.mapNotNull { it.toObject(clazz) }
     }
 
     suspend fun <T : Any> queryArrayContains(
@@ -91,18 +164,14 @@ class FirebaseDataSource @Inject constructor(
         clazz: Class<T>
     ): List<T> {
         return firestore.collection(collection)
-            .whereArrayContains(field, value)
-            .get()
-            .await()
-            .documents
-            .mapNotNull { doc ->
+            .whereArrayContains(field, value).get().await()
+            .documents.mapNotNull { doc ->
                 doc.toObject(clazz)?.also { obj ->
                     try {
                         val idField = obj.javaClass.getDeclaredField("id")
                         idField.isAccessible = true
                         idField.set(obj, doc.id)
-                    } catch (e: Exception) {
-                    }
+                    } catch (e: Exception) { /* no id field */ }
                 }
             }
     }
@@ -113,17 +182,10 @@ class FirebaseDataSource @Inject constructor(
         value: Any,
         clazz: Class<T>
     ): Flow<List<T>> = callbackFlow {
-        val listener = firestore.collection(collection)
-            .whereEqualTo(field, value)
+        val listener = firestore.collection(collection).whereEqualTo(field, value)
             .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    trySend(emptyList())
-                    return@addSnapshotListener
-                }
-                val data = snapshot?.documents?.mapNotNull {
-                    it.toObject(clazz)
-                } ?: emptyList()
-                trySend(data)
+                if (error != null) { trySend(emptyList()); return@addSnapshotListener }
+                trySend(snapshot?.documents?.mapNotNull { it.toObject(clazz) } ?: emptyList())
             }
         awaitClose { listener.remove() }
     }
@@ -134,118 +196,33 @@ class FirebaseDataSource @Inject constructor(
         clazz: Class<T>
     ): Flow<T?> = callbackFlow {
         var listener: ListenerRegistration? = null
-
         try {
-            listener = firestore.collection(collection)
-                .document(documentId)
-                // INCLUDE metadata changes so we get both cache and server snapshots.
-                // Without this, Firestore only fires once the server responds, but may still
-                // deliver a stale/empty cache snapshot first with no way to distinguish it.
+            listener = firestore.collection(collection).document(documentId)
                 .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                     if (error != null) {
                         Log.e(TAG, "observeDocument error [$collection/$documentId]: ${error.message}")
-                        // Transient Firestore error — keep the listener alive for the next snapshot.
                         return@addSnapshotListener
                     }
-
                     val isFromCache = snapshot?.metadata?.isFromCache ?: true
-
-                    // Cache reports document absent: we cannot distinguish "does not exist"
-                    // from "not cached yet". Skip and wait for the server snapshot.
                     if ((snapshot == null || !snapshot.exists()) && isFromCache) {
                         Log.d(TAG, "observeDocument skipping empty cache snapshot for $collection/$documentId")
                         return@addSnapshotListener
                     }
-
-                    // Server confirmed the document is gone (or snapshot is null from server).
                     if (snapshot == null || !snapshot.exists()) {
-                        trySend(null)
-                        return@addSnapshotListener
+                        trySend(null); return@addSnapshotListener
                     }
-
                     try {
-                        val data = snapshot.toObject(clazz)
-                        trySend(data)
+                        trySend(snapshot.toObject(clazz))
                     } catch (e: Exception) {
                         Log.e(TAG, "observeDocument parse error [$collection/$documentId]: ${e.message}")
-                        // Skip malformed snapshot — listener stays active.
                     }
                 }
         } catch (e: Exception) {
             Log.e(TAG, "observeDocument setup error [$collection/$documentId]: ${e.message}")
             close(e)
         }
-
         awaitClose { listener?.remove() }
     }.buffer(capacity = 64)
-
-    suspend fun <T : Any> getDocument(
-        collection: String,
-        documentId: String,
-        clazz: Class<T>
-    ): T? {
-        return try {
-            val snapshot = firestore.collection(collection)
-                .document(documentId)
-                .get()
-                .await()
-            snapshot.toObject(clazz)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting document: ${e.message}", e)
-            null
-        }
-    }
-
-    suspend fun setDocument(collection: String, documentId: String, data: Any) {
-        firestore.collection(collection)
-            .document(documentId)
-            .set(data)
-            .await()
-    }
-
-    suspend fun updateDocument(collection: String, documentId: String, updates: Map<String, Any>) {
-        Log.d(TAG, "Updating document: $collection/$documentId with ${updates.keys}")
-        firestore.collection(collection)
-            .document(documentId)
-            .update(updates)
-            .await()
-        Log.d(TAG, "Update completed for $collection/$documentId")
-    }
-
-    suspend fun deleteDocument(collection: String, documentId: String) {
-        firestore.collection(collection)
-            .document(documentId)
-            .delete()
-            .await()
-    }
-
-    suspend fun addArrayValue(
-        collection: String,
-        documentId: String,
-        field: String,
-        value: Any
-    ) {
-        Log.d(TAG, "Adding array value to $collection/$documentId field $field")
-        firestore.collection(collection)
-            .document(documentId)
-            .update(field, com.google.firebase.firestore.FieldValue.arrayUnion(value))
-            .await()
-        Log.d(TAG, "Array value added to $collection/$documentId")
-    }
-
-    suspend fun removeArrayValue(
-        collection: String,
-        documentId: String,
-        field: String,
-        value: Any
-    ) {
-        Log.d(TAG, "Removing array value from $collection/$documentId field $field")
-        firestore.collection(collection)
-            .document(documentId)
-            .update(field, com.google.firebase.firestore.FieldValue.arrayRemove(value))
-            .await()
-        Log.d(TAG, "Array value removed from $collection/$documentId")
-    }
 
     fun <T : Any> observeArrayContains(
         collection: String,
@@ -253,41 +230,16 @@ class FirebaseDataSource @Inject constructor(
         value: Any,
         clazz: Class<T>
     ): Flow<List<T>> = callbackFlow {
-        val listener = firestore.collection(collection)
-            .whereArrayContains(field, value)
+        val listener = firestore.collection(collection).whereArrayContains(field, value)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    Log.e(TAG, "Error in array query: ${error.message}", error)
+                    Log.e(TAG, "observeArrayContains error: ${error.message}")
                     return@addSnapshotListener
                 }
-
-                val results = snapshot?.documents?.mapNotNull {
-                    try {
-                        it.toObject(clazz)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error parsing array item: ${e.message}", e)
-                        null
-                    }
-                } ?: emptyList()
-
-                trySend(results)
+                trySend(snapshot?.documents?.mapNotNull {
+                    try { it.toObject(clazz) } catch (e: Exception) { null }
+                } ?: emptyList())
             }
-
         awaitClose { listener.remove() }
-    }
-
-    suspend fun addArrayValueWithMerge(
-        collection: String,
-        documentId: String,
-        field: String,
-        value: Any
-    ) {
-        firestore.collection(collection)
-            .document(documentId)
-            .set(
-                mapOf(field to com.google.firebase.firestore.FieldValue.arrayUnion(value)),
-                SetOptions.merge()
-            )
-            .await()
     }
 }
