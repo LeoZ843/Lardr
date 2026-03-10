@@ -16,10 +16,6 @@ interface StoreRepository {
     suspend fun addMemberToStore(storeId: String, userId: String): Result<Unit>
     suspend fun removeMemberFromStore(storeId: String, userId: String): Result<Unit>
 
-    // All write methods accept current state from ViewModel to avoid getDocument round-trips.
-    // Writes are fire-and-forget: they return Success immediately after submitting to the
-    // local Firestore cache. observeStore delivers the pending-write snapshot instantly.
-
     suspend fun addIngredientToShoppingList(
         storeId: String,
         ingredient: Ingredient,
@@ -53,6 +49,7 @@ interface StoreRepository {
         currentList: List<Ingredient>
     ): Result<Unit>
 
+    // Awaited — ensures Firestore offline persistence captures the write before returning.
     suspend fun markIngredientAsBought(
         storeId: String,
         ingredientId: String,

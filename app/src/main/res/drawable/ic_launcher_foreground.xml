@@ -1,0 +1,285 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+  <group android:scaleX="0.6"
+      android:scaleY="0.6"
+      android:translateX="204.8"
+      android:translateY="204.8">
+
+      <!-- Flour Mound -->
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M187,940
+          C90,955 21,930 2,880
+          C10,831 55,805 119,788
+          C140,753 177,716 262,692
+          C405,649 606,645 762,692
+          C847,716 884,753 905,788
+          C969,805 1014,831 1022,880
+          C1003,930 934,955 837,940
+          C701,1021, 323,1021 187,940
+          Z"/>
+
+      <path
+          android:fillColor="#E8E2D8"
+          android:fillAlpha="0.9"
+          android:pathData="
+          M403,970
+          C478,925 560,915 651,962
+          C691,970 733,922 673,875
+          C697,863 728,867 752,879
+          C763,883 774,880 752,831
+          C784,809 849,871 889,903
+          C902,908 906,892 898,896
+          C923,878 950,896 961,913
+          C880,950 660,1008 403,970
+          Z"/>
+
+      <path
+          android:strokeColor="#000000"
+          android:strokeWidth="20"
+          android:pathData="
+          M187,940
+          C90,955 21,930 2,880
+          C10,831 55,805 119,788
+          C140,753 177,716 262,692
+          C405,649 606,645 762,692
+          C847,716 884,753 905,788
+          C969,805 1014,831 1022,880
+          C1003,930 934,955 837,940
+          C701,1021, 323,1021 187,940
+          Z"/>
+
+      <!-- Tomato -->
+      <path
+          android:fillColor="#FF110B"
+          android:strokeColor="#000000"
+          android:strokeWidth="20"
+          android:pathData="
+          M170,500
+          C185,340 350,215 512,225
+          C674,215 839,340 854,500
+          C875,675 735,795 512,795
+          C289,795 149,675 170,500
+          Z"/>
+
+      <!-- Flour Mound over Tomato -->
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M220,786
+          C276,720 420,684 518,722
+          C562,706 637,721 673,743
+          C720,728 781,730 834,768
+          C782,800 726,802 676,830
+          C643,855 579,832 517,852
+          C423,841 297,832 220,786
+          Z"/>
+
+      <path
+          android:fillColor="#000000"
+          android:pathData="
+          M220,786
+          C276,720 420,684 518,722
+          C562,706 637,721 673,743
+          C720,728 781,730 834,768
+          C782,750 726,752 676,780
+          C643,755 579,732 517,752
+          C423,711 297,732 220,786
+          Z"/>
+
+      <path
+          android:fillColor="#E8E2D8"
+          android:fillAlpha="0.9"
+          android:pathData="
+          M181,835
+          L144,892
+          C134,908 167,929 198,901
+          C213,896 223,905 224,918
+          C171,942 105,932 61,910
+          C85,876 125,850 181,835
+          Z"/>
+
+      <path
+          android:fillColor="#E8E2D8"
+          android:fillAlpha="0.9"
+          android:pathData="
+          M298,870
+          C300,924 246,911 255,903
+          Z"/>
+
+      <path
+          android:fillColor="#E8E2D8"
+          android:fillAlpha="0.9"
+          android:pathData="
+          M235,946
+          L259,929
+          C273,930 276,944 267,951
+          Z"/>
+
+      <path
+          android:fillColor="#E8E2D8"
+          android:fillAlpha="0.9"
+          android:pathData="
+          M332,840
+          C357,816 392,797 425,809
+          L377,855
+          Z"/>
+
+      <path
+          android:fillColor="#E8E2D8"
+          android:fillAlpha="0.9"
+          android:pathData="
+          M563,802
+          C601,814 634,837 652,862
+          Z"/>
+
+      <!-- Petiole -->
+      <path
+          android:fillColor="#2E8B2E"
+          android:strokeColor="#000000"
+          android:strokeWidth="14"
+          android:pathData="
+          M486,200
+          C498,173 524,133 560,106
+          C573,113 588,128 592,142
+          C576,156 555,180 544,202
+          C574,186 625,174 674,181
+          C661,203 630,225 611,233
+          C630,246 650,268 660,290
+          C627,300 585,288 555,269
+          C548,291 536,311 515,330
+          C498,314 483,295 474,270
+          C445,282 411,294 367,296
+          C379,269 395,248 418,233
+          C397,224 369,205 356,181
+          C393,174 445,181 486,200
+          Z"/>
+
+      <!-- Tomato White Drip -->
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M302,310
+          C316,299 331,311 315,325
+          C301,335 285,324 302,310
+          Z"/>
+
+      <!-- Tomato Glasses -->
+      <path
+          android:fillColor="#000000"
+          android:pathData="
+          M176,365
+          C233,344 378,345 462,362
+          C480,366 544,366 562,362
+          C646,345 791,344 848,365
+          C860,367 860,419 842,427
+          C848,430 823,439 828,449
+          C826,541 768,583 692,580
+          C633,582 556,550 525,440
+          C524,436 512,430 500,436
+          C499,440 470,550 394,574
+          C332,590 250,580 226,544
+          C180,484 211,439 186,430
+          C164,419 164,367 176,365
+          Z"/>
+
+      <!-- Left Lens -->
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M322,375
+          C266,372 230,380 225,404
+          C196,510 280,604 420,540
+          C424,530 424,522 422,524
+          C394,550 290,564 257,510
+          Z"/>
+
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M411,385
+          L374,465
+          C374,473 380,476 390,470
+          L448,390
+          Z"/>
+
+      <!-- Right Lens -->
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M648,380
+          C596,382 560,386 550,410
+          C556,488 609,590 770,540
+          C774,534 774,528 772,527
+          C720,550 630,550 597,496
+          Z"/>
+
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M661,380
+          L624,465
+          C624,473 630,476 640,470
+          L703,380
+          Z"/>
+
+      <!-- Smile -->
+      <path
+          android:fillColor="@android:color/transparent"
+          android:strokeColor="#FFFFFF"
+          android:strokeWidth="18"
+          android:strokeLineCap="round"
+          android:pathData="
+          M432,620
+          Q512,680 592,620"/>
+
+      <!-- Drips -->
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M131,555
+          C88,443 9,557 131,555
+          Z"/>
+
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M140,594
+          C81,552 67,641 140,594
+          Z"/>
+
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M893,555
+          C936,443 1015,557 893,555
+          Z"/>
+
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M884,594
+          C943,552 957,641 884,594
+          Z"/>
+
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M199,984
+          C113,992 164,922 195,974
+          Z"/>
+
+      <path
+          android:fillColor="#FFFFFF"
+          android:pathData="
+          M764,926
+          C780,1000 880,974 880,955
+          C872,920 813,880 764,926
+          Z"/>
+
+  </group>
+</vector>

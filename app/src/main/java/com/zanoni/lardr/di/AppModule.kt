@@ -1,5 +1,6 @@
 package com.zanoni.lardr.di
 
+import android.content.Context
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.zanoni.lardr.data.local.PreferencesManager
@@ -13,10 +14,12 @@ import com.zanoni.lardr.data.repository.UserRepositoryImpl
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
-import dagger.hilt.components.SingletonComponent
-import javax.inject.Singleton
-import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -24,55 +27,47 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideFirebaseAuth(): FirebaseAuth {
-        return FirebaseAuth.getInstance()
-    }
+    @ApplicationScope
+    fun provideApplicationScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     @Provides
     @Singleton
-    fun provideFirebaseFirestore(): FirebaseFirestore {
-        return FirebaseFirestore.getInstance()
-    }
+    fun provideFirebaseAuth(): FirebaseAuth = FirebaseAuth.getInstance()
+
+    @Provides
+    @Singleton
+    fun provideFirebaseFirestore(): FirebaseFirestore = FirebaseFirestore.getInstance()
 
     @Provides
     @Singleton
     fun provideFirebaseDataSource(
         auth: FirebaseAuth,
         firestore: FirebaseFirestore
-    ): FirebaseDataSource {
-        return FirebaseDataSource(auth, firestore)
-    }
+    ): FirebaseDataSource = FirebaseDataSource(auth, firestore)
 
     @Provides
     @Singleton
     fun providePreferencesManager(
         @ApplicationContext context: Context
-    ): PreferencesManager {
-        return PreferencesManager(context)
-    }
+    ): PreferencesManager = PreferencesManager(context)
 
     @Provides
     @Singleton
     fun provideAuthRepository(
         dataSource: FirebaseDataSource,
         @ApplicationContext context: Context
-    ): AuthRepository {
-        return AuthRepositoryImpl(dataSource, context)
-    }
+    ): AuthRepository = AuthRepositoryImpl(dataSource, context)
 
     @Provides
     @Singleton
     fun provideStoreRepository(
         dataSource: FirebaseDataSource
-    ): StoreRepository {
-        return StoreRepositoryImpl(dataSource)
-    }
+    ): StoreRepository = StoreRepositoryImpl(dataSource)
 
     @Provides
     @Singleton
     fun provideUserRepository(
         dataSource: FirebaseDataSource
-    ): UserRepository {
-        return UserRepositoryImpl(dataSource)
-    }
+    ): UserRepository = UserRepositoryImpl(dataSource)
 }

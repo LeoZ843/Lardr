@@ -81,7 +81,7 @@ fun FriendsScreen(
             if (!uiState.isOfflineMode) {
                 FloatingActionButton(
                     onClick = { showAddFriendDialog = true },
-                    containerColor = MaterialTheme.colorScheme.tertiary
+                    containerColor = MaterialTheme.colorScheme.primary
                 ) {
                     Icon(
                         imageVector = Icons.Default.PersonAdd,

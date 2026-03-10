@@ -3,19 +3,22 @@ package com.zanoni.lardr.ui.screens.store
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.zanoni.lardr.data.local.PendingWritesManager
+import com.zanoni.lardr.data.local.StoreCache
 import com.zanoni.lardr.data.model.ConflictStrategy
 import com.zanoni.lardr.data.model.Ingredient
 import com.zanoni.lardr.data.model.Recipe
 import com.zanoni.lardr.data.model.RecipeIngredient
 import com.zanoni.lardr.data.model.StarredIngredient
 import com.zanoni.lardr.data.model.Store
-import com.zanoni.lardr.data.local.StoreCache
 import com.zanoni.lardr.data.model.User
 import com.zanoni.lardr.data.repository.AuthRepository
 import com.zanoni.lardr.data.repository.Result
 import com.zanoni.lardr.data.repository.StoreRepository
 import com.zanoni.lardr.data.repository.UserRepository
+import com.zanoni.lardr.di.ApplicationScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -64,6 +67,8 @@ class StoreViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val userRepository: UserRepository,
     private val storeCache: StoreCache,
+    private val pendingWritesManager: PendingWritesManager,
+    @ApplicationScope private val applicationScope: CoroutineScope,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -73,8 +78,6 @@ class StoreViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(buildInitialState())
     val uiState: StateFlow<StoreUiState> = _uiState.asStateFlow()
 
-    // Pre-populate from cache so the UI renders instantly on open.
-    // HomeViewModel already loaded all stores — no need to wait for observeStore.
     private fun buildInitialState(): StoreUiState {
         val cached = storeCache.get(storeId)
         return if (cached != null) {
@@ -98,14 +101,11 @@ class StoreViewModel @Inject constructor(
         loadSentInvites()
     }
 
-    // ─── Store loading ────────────────────────────────────────────────────────
-    // observeStore is used only for remote sync — the UI never waits on it for
-    // local mutations since every write path does an optimistic state update first.
+    // ─── Store loading (viewModelScope — cancelled on nav away) ──────────────
 
     private fun loadStore() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            // Only show spinner if cache gave us nothing to display.
             if (!_uiState.value.isDataLoaded) {
                 _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             }
@@ -117,13 +117,22 @@ class StoreViewModel @Inject constructor(
                         }
                         return@collect
                     }
-                    // Keep cache up to date so subsequent opens are instant.
                     storeCache.put(store)
-                    // Only update store-related fields — never touch snackbarMessage here.
+                    val pendingBought = pendingWritesManager.queue.getPendingBought(storeId)
+                    val correctedList = if (pendingBought.isEmpty()) {
+                        store.shoppingList
+                    } else {
+                        store.shoppingList.map { ingredient ->
+                            pendingBought[ingredient.id]?.let { ingredient.copy(bought = it) } ?: ingredient
+                        }
+                    }
+                    val pendingName = pendingWritesManager.queue.getPendingName(storeId)
+                    val correctedStore = if (pendingName != null) store.copy(name = pendingName) else store
+
                     _uiState.value = _uiState.value.copy(
-                        store = store,
-                        shoppingListItems = store.shoppingList.filter { !it.bought },
-                        boughtItems = store.shoppingList.filter { it.bought },
+                        store = correctedStore,
+                        shoppingListItems = correctedList.filter { !it.bought },
+                        boughtItems = correctedList.filter { it.bought },
                         starredIngredients = store.starredIngredients,
                         recipes = store.recipes,
                         isLoading = false,
@@ -146,7 +155,7 @@ class StoreViewModel @Inject constructor(
 
     fun retryLoad() = loadStore()
 
-    // ─── Social ───────────────────────────────────────────────────────────────
+    // ─── Social (viewModelScope — UI only) ───────────────────────────────────
 
     private fun loadSentInvites() {
         viewModelScope.launch {
@@ -169,10 +178,14 @@ class StoreViewModel @Inject constructor(
     }
 
     fun shareStore(friendIds: List<String>) {
-        viewModelScope.launch {
-            val store = _uiState.value.store ?: return@launch
+        val store = _uiState.value.store ?: return
+        applicationScope.launch {
             friendIds.forEach { friendId ->
-                userRepository.sendStoreInvite(storeId = store.id, storeName = store.name, friendId = friendId)
+                userRepository.sendStoreInvite(
+                    storeId = store.id,
+                    storeName = store.name,
+                    friendId = friendId
+                )
             }
         }
     }
@@ -192,56 +205,58 @@ class StoreViewModel @Inject constructor(
         conflictStrategy: ConflictStrategy = ConflictStrategy.ASK
     ) {
         val trimmedName = name.trim()
-        viewModelScope.launch {
-            val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
-            if (periodicity != null) {
-                val starred = StarredIngredient(
-                    id = UUID.randomUUID().toString(),
-                    name = trimmedName,
-                    periodicity = periodicity,
-                    defaultQuantity = quantity,
-                    conflictStrategy = conflictStrategy.name,
-                    lastAddedWeek = null
-                )
-                val newIngredient = if (!currentList.any { it.name.equals(trimmedName, ignoreCase = true) }) {
-                    Ingredient(
-                        id = UUID.randomUUID().toString(),
-                        name = trimmedName,
-                        quantity = quantity,
-                        bought = false,
-                        addedBy = starred.id,
-                        addedAt = System.currentTimeMillis()
-                    )
-                } else null
+        val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
 
-                // Optimistic update
-                _uiState.value = _uiState.value.copy(
-                    starredIngredients = _uiState.value.starredIngredients + starred,
-                    shoppingListItems = if (newIngredient != null)
-                        _uiState.value.shoppingListItems + newIngredient
-                    else
-                        _uiState.value.shoppingListItems
-                )
-
-                storeRepository.addStarredIngredient(storeId, starred)
-                if (newIngredient != null) {
-                    storeRepository.addIngredientToShoppingList(storeId, newIngredient, currentList)
-                }
-            } else {
-                if (currentList.any { it.name.equals(trimmedName, ignoreCase = true) }) return@launch
-                val ingredient = Ingredient(
+        if (periodicity != null) {
+            val starred = StarredIngredient(
+                id = UUID.randomUUID().toString(),
+                name = trimmedName,
+                periodicity = periodicity,
+                defaultQuantity = quantity,
+                conflictStrategy = conflictStrategy.name,
+                lastAddedWeek = null
+            )
+            val newIngredient = if (!currentList.any { it.name.equals(trimmedName, ignoreCase = true) }) {
+                Ingredient(
                     id = UUID.randomUUID().toString(),
                     name = trimmedName,
                     quantity = quantity,
                     bought = false,
-                    addedBy = "manual",
+                    addedBy = starred.id,
                     addedAt = System.currentTimeMillis()
                 )
-                // Optimistic update
-                _uiState.value = _uiState.value.copy(
-                    shoppingListItems = _uiState.value.shoppingListItems + ingredient
-                )
-                syncCache()
+            } else null
+
+            _uiState.value = _uiState.value.copy(
+                starredIngredients = _uiState.value.starredIngredients + starred,
+                shoppingListItems = if (newIngredient != null)
+                    _uiState.value.shoppingListItems + newIngredient
+                else
+                    _uiState.value.shoppingListItems
+            )
+            syncCache()
+
+            applicationScope.launch {
+                storeRepository.addStarredIngredient(storeId, starred)
+                if (newIngredient != null) {
+                    storeRepository.addIngredientToShoppingList(storeId, newIngredient, currentList)
+                }
+            }
+        } else {
+            if (currentList.any { it.name.equals(trimmedName, ignoreCase = true) }) return
+            val ingredient = Ingredient(
+                id = UUID.randomUUID().toString(),
+                name = trimmedName,
+                quantity = quantity,
+                bought = false,
+                addedBy = "manual",
+                addedAt = System.currentTimeMillis()
+            )
+            _uiState.value = _uiState.value.copy(
+                shoppingListItems = _uiState.value.shoppingListItems + ingredient
+            )
+            syncCache()
+            applicationScope.launch {
                 storeRepository.addIngredientToShoppingList(storeId, ingredient, currentList)
             }
         }
@@ -267,7 +282,6 @@ class StoreViewModel @Inject constructor(
             return
         }
 
-        // Compute optimistic list and message before any async work.
         val optimisticList: List<Ingredient>? = when {
             existing == null -> currentList + Ingredient(
                 id = UUID.randomUUID().toString(),
@@ -297,7 +311,6 @@ class StoreViewModel @Inject constructor(
             else -> null
         }
 
-        // Optimistic update — UI reflects change immediately.
         if (optimisticList != null) {
             _uiState.value = _uiState.value.copy(
                 shoppingListItems = optimisticList.filter { !it.bought },
@@ -305,6 +318,7 @@ class StoreViewModel @Inject constructor(
                 snackbarMessage = successMessage,
                 pendingStarredAdds = _uiState.value.pendingStarredAdds + starredId
             )
+            syncCache()
         } else {
             _uiState.value = _uiState.value.copy(
                 snackbarMessage = successMessage,
@@ -312,7 +326,7 @@ class StoreViewModel @Inject constructor(
             )
         }
 
-        viewModelScope.launch {
+        applicationScope.launch {
             try {
                 storeRepository.addStarredIngredientToList(storeId, starred, existing, strategy, currentList)
             } finally {
@@ -349,7 +363,6 @@ class StoreViewModel @Inject constructor(
             ConflictStrategy.ASK -> null
         }.let { base -> if (remember && base != null) "$base — preference saved" else base }
 
-        // Optimistic update
         _uiState.value = _uiState.value.copy(
             showConflictDialog = false,
             conflictStarred = null,
@@ -360,7 +373,8 @@ class StoreViewModel @Inject constructor(
             pendingStarredAdds = _uiState.value.pendingStarredAdds + starred.id
         )
         syncCache()
-        viewModelScope.launch {
+
+        applicationScope.launch {
             try {
                 if (remember) {
                     storeRepository.updateStarredIngredient(
@@ -410,18 +424,18 @@ class StoreViewModel @Inject constructor(
                         snackbarMessage = "Added ingredients from \"${recipe.name}\""
                     )
                     syncCache()
-                    storeRepository.addRecipeIngredientsToList(storeId, recipe, currentList, allResolutions)
+                    applicationScope.launch {
+                        storeRepository.addRecipeIngredientsToList(storeId, recipe, currentList, allResolutions)
+                    }
                     return@launch
                 }
 
-                // ASK: split conflicts from non-conflicts
                 val existingMap = currentList.associateBy { it.name.lowercase() }
                 val conflicts = recipe.ingredients.mapNotNull { ri ->
                     existingMap[ri.name.lowercase()]?.let { RecipeConflict(ri, it, recipe.id, recipe.name) }
                 }
                 val nonConflicting = recipe.ingredients.filter { existingMap[it.name.lowercase()] == null }
 
-                // Add non-conflicting ingredients optimistically right now
                 if (nonConflicting.isNotEmpty()) {
                     val newItems = nonConflicting.map { ri ->
                         Ingredient(
@@ -437,9 +451,11 @@ class StoreViewModel @Inject constructor(
                         shoppingListItems = _uiState.value.shoppingListItems + newItems
                     )
                     syncCache()
-                    storeRepository.addRecipeIngredientsToList(
-                        storeId, recipe.copy(ingredients = nonConflicting), currentList, emptyMap()
-                    )
+                    applicationScope.launch {
+                        storeRepository.addRecipeIngredientsToList(
+                            storeId, recipe.copy(ingredients = nonConflicting), currentList, emptyMap()
+                        )
+                    }
                 }
 
                 if (conflicts.isEmpty()) {
@@ -472,7 +488,6 @@ class StoreViewModel @Inject constructor(
         val toResolve = if (applyToAll) listOf(current) + remaining else listOf(current)
         val resolutions = toResolve.associate { it.recipeIngredient.name to strategy }
 
-        // Optimistic update for resolved conflicts
         val miniRecipe = Recipe(
             id = current.recipeId,
             name = current.recipeName,
@@ -497,7 +512,7 @@ class StoreViewModel @Inject constructor(
             pendingRecipeId = if (applyToAll || remaining.isEmpty()) null else _uiState.value.pendingRecipeId
         )
         syncCache()
-        viewModelScope.launch {
+        applicationScope.launch {
             storeRepository.addRecipeIngredientsToList(storeId, miniRecipe, currentList, resolutions)
         }
     }
@@ -525,10 +540,9 @@ class StoreViewModel @Inject constructor(
             conflictStrategy = null,
             lastAddedWeek = null
         )
-        // Optimistic update
         _uiState.value = _uiState.value.copy(recipes = _uiState.value.recipes + recipe)
         syncCache()
-        viewModelScope.launch {
+        applicationScope.launch {
             storeRepository.addRecipe(storeId, recipe)
         }
     }
@@ -537,30 +551,22 @@ class StoreViewModel @Inject constructor(
 
     fun markIngredientAsBought(ingredientId: String) {
         val ingredient = _uiState.value.shoppingListItems.find { it.id == ingredientId } ?: return
-        val newList = (_uiState.value.shoppingListItems + _uiState.value.boughtItems)
-            .map { if (it.id == ingredientId) it.copy(bought = true) else it }
         _uiState.value = _uiState.value.copy(
             shoppingListItems = _uiState.value.shoppingListItems.filter { it.id != ingredientId },
             boughtItems = _uiState.value.boughtItems + ingredient.copy(bought = true)
         )
         syncCache()
-        viewModelScope.launch {
-            storeRepository.markIngredientAsBought(storeId, ingredientId, true, newList)
-        }
+        pendingWritesManager.markIngredientBought(storeId, ingredientId, true)
     }
 
     fun markIngredientAsNotBought(ingredientId: String) {
         val ingredient = _uiState.value.boughtItems.find { it.id == ingredientId } ?: return
-        val newList = (_uiState.value.shoppingListItems + _uiState.value.boughtItems)
-            .map { if (it.id == ingredientId) it.copy(bought = false) else it }
         _uiState.value = _uiState.value.copy(
             boughtItems = _uiState.value.boughtItems.filter { it.id != ingredientId },
             shoppingListItems = _uiState.value.shoppingListItems + ingredient.copy(bought = false)
         )
         syncCache()
-        viewModelScope.launch {
-            storeRepository.markIngredientAsBought(storeId, ingredientId, false, newList)
-        }
+        pendingWritesManager.markIngredientBought(storeId, ingredientId, false)
     }
 
     fun deleteIngredient(ingredientId: String) {
@@ -571,9 +577,7 @@ class StoreViewModel @Inject constructor(
             boughtItems = newList.filter { it.bought }
         )
         syncCache()
-        viewModelScope.launch {
-            storeRepository.deleteIngredient(storeId, ingredientId, newList)
-        }
+        pendingWritesManager.deleteIngredient(storeId, ingredientId)
     }
 
     fun updateIngredient(
@@ -589,14 +593,14 @@ class StoreViewModel @Inject constructor(
         val current = currentList.find { it.id == ingredientId } ?: return
         val updated = current.copy(name = name, quantity = quantity)
 
-        // Optimistic update for the ingredient in the list
         val newList = currentList.map { if (it.id == ingredientId) updated else it }
         _uiState.value = _uiState.value.copy(
             shoppingListItems = newList.filter { !it.bought },
             boughtItems = newList.filter { it.bought }
         )
         syncCache()
-        viewModelScope.launch {
+
+        applicationScope.launch {
             storeRepository.updateIngredient(storeId, updated, currentList)
 
             if (isStarred) {
@@ -609,7 +613,6 @@ class StoreViewModel @Inject constructor(
                         conflictStrategy = conflictStrategy.name,
                         lastAddedWeek = null
                     )
-                    // Optimistic update for new starred ingredient
                     _uiState.value = _uiState.value.copy(
                         starredIngredients = _uiState.value.starredIngredients + starred
                     )
@@ -624,7 +627,6 @@ class StoreViewModel @Inject constructor(
                             defaultQuantity = quantity,
                             conflictStrategy = conflictStrategy.name
                         )
-                        // Optimistic update for existing starred ingredient
                         _uiState.value = _uiState.value.copy(
                             starredIngredients = currentStarred.map { if (it.id == starred.id) updatedStarred else it }
                         )
@@ -633,7 +635,6 @@ class StoreViewModel @Inject constructor(
                 }
             } else {
                 if (current.addedBy != "manual") {
-                    // Optimistic update: remove from starred
                     _uiState.value = _uiState.value.copy(
                         starredIngredients = currentStarred.filter { it.id != current.addedBy }
                     )
@@ -661,24 +662,22 @@ class StoreViewModel @Inject constructor(
             periodicity = periodicity,
             conflictStrategy = conflictStrategy.name
         )
-        // Optimistic update — UI reflects change before Firestore responds
         _uiState.value = _uiState.value.copy(
             starredIngredients = currentStarred.map { if (it.id == starredId) updatedStarred else it }
         )
         syncCache()
-        viewModelScope.launch {
+        applicationScope.launch {
             storeRepository.updateStarredIngredient(storeId, updatedStarred, currentStarred)
         }
     }
 
     fun deleteStarredIngredient(starredId: String) {
         val currentStarred = _uiState.value.starredIngredients
-        // Optimistic update
         _uiState.value = _uiState.value.copy(
             starredIngredients = currentStarred.filter { it.id != starredId }
         )
         syncCache()
-        viewModelScope.launch {
+        applicationScope.launch {
             storeRepository.deleteStarredIngredient(storeId, starredId, currentStarred)
         }
     }
@@ -687,10 +686,9 @@ class StoreViewModel @Inject constructor(
 
     fun deleteRecipe(recipeId: String) {
         val currentRecipes = _uiState.value.recipes
-        // Optimistic update
         _uiState.value = _uiState.value.copy(recipes = currentRecipes.filter { it.id != recipeId })
         syncCache()
-        viewModelScope.launch {
+        applicationScope.launch {
             storeRepository.deleteRecipe(storeId, recipeId, currentRecipes)
         }
     }
@@ -698,17 +696,19 @@ class StoreViewModel @Inject constructor(
     // ─── Store mutations ──────────────────────────────────────────────────────
 
     fun updateStoreName(newName: String) {
-        viewModelScope.launch { storeRepository.updateStoreName(storeId, newName) }
+        val currentStore = _uiState.value.store ?: return
+        val updatedStore = currentStore.copy(name = newName)
+        _uiState.value = _uiState.value.copy(store = updatedStore)
+        syncCache()
+        pendingWritesManager.updateStoreName(storeId, newName)
     }
 
     fun deleteStore() {
-        viewModelScope.launch { storeRepository.deleteStore(storeId) }
+        applicationScope.launch { storeRepository.deleteStore(storeId) }
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    // Applies conflict resolutions locally to produce the optimistic list,
-    // mirroring exactly what StoreRepositoryImpl.addRecipeIngredientsToList does.
     private fun applyResolutionsLocally(
         recipe: Recipe,
         currentList: List<Ingredient>,
@@ -761,12 +761,9 @@ class StoreViewModel @Inject constructor(
         } else "${qty1.trim()} + ${qty2.trim()}"
     }
 
-    // ─── UI helpers ───────────────────────────────────────────────────────────
-
     fun clearError() { _uiState.value = _uiState.value.copy(error = null) }
     fun clearSnackbar() { _uiState.value = _uiState.value.copy(snackbarMessage = null) }
 
-    // Rebuilds the cached Store from current UI state so the next open is instant and correct.
     private fun syncCache() {
         val current = _uiState.value
         val store = current.store ?: return

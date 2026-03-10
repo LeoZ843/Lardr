@@ -31,6 +31,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -44,6 +47,9 @@ fun AddRecipeDialog(
     val ingredientQuantities = remember { mutableStateListOf("") }
     var recipeNameError by remember { mutableStateOf<String?>(null) }
     var periodicityError by remember { mutableStateOf<String?>(null) }
+
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     fun validate(): Boolean {
         var isValid = true
@@ -141,8 +147,10 @@ fun AddRecipeDialog(
                     )
                     IconButton(
                         onClick = {
-                            ingredientNames.add("")
-                            ingredientQuantities.add("")
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                            ingredientNames.add(0, "")
+                            ingredientQuantities.add(0, "")
                         }
                     ) {
                         Icon(

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
@@ -23,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
@@ -45,17 +47,19 @@ fun SwipeableIngredientCard(
     val swipeThreshold = 200f
 
     Box(
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
     ) {
         // Background actions
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    //if (offsetX.value > 0)
+                    if (offsetX.value > 0)
                         MaterialTheme.colorScheme.tertiary
-                    //else
-                        //MaterialTheme.colorScheme.error
+                    else
+                        MaterialTheme.colorScheme.error
                 )
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -103,15 +107,14 @@ fun SwipeableIngredientCard(
                         }
                     )
                 },
+            shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (ingredient.bought)
                     MaterialTheme.colorScheme.surfaceVariant
                 else
                     MaterialTheme.colorScheme.surface
             ),
-            elevation = CardDefaults.cardElevation(
-                defaultElevation = 0.dp
-            )
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
             Row(
                 modifier = Modifier

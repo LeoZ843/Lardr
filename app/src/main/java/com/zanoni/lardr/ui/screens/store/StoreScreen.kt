@@ -164,7 +164,7 @@ fun StoreScreen(
                         StoreTab.RECIPES -> showAddRecipeDialog = true
                     }
                 },
-                containerColor = MaterialTheme.colorScheme.tertiary
+                containerColor = MaterialTheme.colorScheme.primary
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
@@ -197,7 +197,7 @@ fun StoreScreen(
                     TabRow(
                         selectedTabIndex = tabs.indexOfFirst { it.tab == uiState.currentTab },
                         containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.primary
+                        contentColor = MaterialTheme.colorScheme.onSurface
                     ) {
                         tabs.forEach { tabItem ->
                             Tab(

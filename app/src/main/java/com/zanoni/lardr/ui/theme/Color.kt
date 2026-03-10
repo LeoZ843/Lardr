@@ -3,20 +3,16 @@ package com.zanoni.lardr.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // Primary - Tomato Red
-val TomatoRed = Color(0xFFE94C3D)           // Main red
-val TomatoRedDark = Color(0xFFD13B2E)       // Darker red
+val TomatoRed = Color(0xFFE94C3D)
 
 // Secondary - Tomato Orange
-val TomatoOrange = Color(0xFFFF9D5C)        // Background orange
-val TomatoOrangeLight = Color(0xFFFFB87A)   // Light orange
+val TomatoOrange = Color(0xFFFF9D5C)
 
 // Tertiary - Tomato Green (for contrast)
-val TomatoGreen = Color(0xFF7CB342)         // Leaf green
-val TomatoGreenDark = Color(0xFF689F38)     // Dark green
+val TomatoGreen = Color(0xFF7CB342)
 
 // Accents
-val CoralAccent = Color(0xFFFF6B6B)         // Coral for highlights
-val CreamAccent = Color(0xFFFFF8E1)         // Cream background
+val CreamAccent = Color(0xFFFFF8E1)
 
 // Feedback (for success/error states)
 val SuccessGreen = Color(0xFF66BB6A)        // Positive actions

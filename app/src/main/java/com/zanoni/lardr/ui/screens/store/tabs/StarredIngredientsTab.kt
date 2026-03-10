@@ -142,7 +142,7 @@ private fun StarredIngredientCard(
                 Text(
                     text = "Every ${starredIngredient.periodicity} week${if (starredIngredient.periodicity > 1) "s" else ""}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.tertiary
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -154,7 +154,7 @@ private fun StarredIngredientCard(
                 androidx.compose.material3.Button(
                     onClick = onAddToList,
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.tertiary
+                        containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
                     Icon(

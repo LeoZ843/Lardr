@@ -141,7 +141,7 @@ private fun RecipeCard(
                 Text(
                     text = "Every ${recipe.periodicity} week${if (recipe.periodicity > 1) "s" else ""}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.tertiary
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -154,7 +154,7 @@ private fun RecipeCard(
                 androidx.compose.material3.Button(
                     onClick = onAddToList,
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.tertiary
+                        containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
                     Icon(

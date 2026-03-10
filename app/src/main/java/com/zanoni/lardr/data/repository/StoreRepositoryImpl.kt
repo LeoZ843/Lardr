@@ -218,8 +218,10 @@ class StoreRepositoryImpl @Inject constructor(
         currentList: List<Ingredient>
     ): Result<Unit> {
         return try {
-            val updatedList = currentList.map { if (it.id == ingredientId) it.copy(bought = bought) else it }
-            dataSource.updateDocumentAsync("stores", storeId, mapOf("shoppingList" to updatedList))
+            val updatedList = currentList.map {
+                if (it.id == ingredientId) it.copy(bought = bought) else it
+            }
+            dataSource.updateDocument("stores", storeId, mapOf("shoppingList" to updatedList))
             Result.Success(Unit)
         } catch (e: Exception) {
             Result.Error(e)
