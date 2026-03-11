@@ -33,6 +33,7 @@ data class PendingWrite(
 }
 
 enum class WriteType {
+    STORE_CREATE,
     STORE_NAME,
     INGREDIENT_BOUGHT,
     INGREDIENT_DELETE

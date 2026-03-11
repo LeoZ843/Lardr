@@ -16,7 +16,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -28,13 +30,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.zanoni.lardr.data.model.Recipe
+
+private val FAB_BOTTOM_PADDING = 88.dp
 
 @Composable
 fun RecipesTab(
     recipes: List<Recipe>,
-    onRecipeClick: (String) -> Unit,
+    onEditRecipe: (Recipe) -> Unit,
     onAddRecipeToList: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -62,7 +67,7 @@ fun RecipesTab(
                 text = "No recipes yet\nTap + to create a recipe",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
         }
     } else {
@@ -70,8 +75,10 @@ fun RecipesTab(
             columns = GridCells.Fixed(columns),
             modifier = modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                horizontal = horizontalPadding,
-                vertical = 16.dp
+                start = horizontalPadding,
+                end = horizontalPadding,
+                top = 16.dp,
+                bottom = FAB_BOTTOM_PADDING
             ),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -79,7 +86,7 @@ fun RecipesTab(
             items(recipes.sortedBy { it.name.lowercase() }) { recipe ->
                 RecipeCard(
                     recipe = recipe,
-                    onClick = { onRecipeClick(recipe.id) },
+                    onEdit = { onEditRecipe(recipe) },
                     onAddToList = { onAddRecipeToList(recipe.id) }
                 )
             }
@@ -90,16 +97,13 @@ fun RecipesTab(
 @Composable
 private fun RecipeCard(
     recipe: Recipe,
-    onClick: () -> Unit,
+    onEdit: () -> Unit,
     onAddToList: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
-        onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
@@ -118,11 +122,10 @@ private fun RecipeCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
-
-                IconButton(onClick = onClick) {
+                IconButton(onClick = onEdit) {
                     Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "Recipe options",
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit recipe",
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -141,7 +144,7 @@ private fun RecipeCard(
                 Text(
                     text = "Every ${recipe.periodicity} week${if (recipe.periodicity > 1) "s" else ""}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.tertiary
                 )
             }
 
@@ -151,16 +154,13 @@ private fun RecipeCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
             ) {
-                androidx.compose.material3.Button(
+                Button(
                     onClick = onAddToList,
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = null
-                    )
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Add to list")
                 }

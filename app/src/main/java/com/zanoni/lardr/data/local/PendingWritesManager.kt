@@ -20,8 +20,6 @@ class PendingWritesManager @Inject constructor(
 
     // Called from Application.onCreate. Replays writes that were enqueued
     // but never confirmed because the process was killed mid-flight.
-    // The "only replay if interrupted" guarantee comes from the queue itself:
-    // an entry is only present if enqueue() was called but dequeue() was not.
     fun replayPendingWrites() {
         val pending = queue.getAll()
         if (pending.isEmpty()) return
@@ -33,16 +31,30 @@ class PendingWritesManager @Inject constructor(
                     queue.dequeue(write.id)
                     Log.d(tag, "Replayed ${write.type} ${write.id}")
                 } catch (e: Exception) {
-                    Log.w(
-                        tag,
-                        "Replay failed for ${write.id}, will retry on next start: ${e.message}"
-                    )
+                    Log.w(tag, "Replay failed for ${write.id}, will retry on next start: ${e.message}")
                 }
             }
         }
     }
 
     // ─── Public enqueue helpers ───────────────────────────────────────────────
+
+    fun createStore(store: Store) {
+        val write = PendingWrite(
+            id = UUID.randomUUID().toString(),
+            type = WriteType.STORE_CREATE,
+            storeId = store.id,
+            params = mapOf(
+                "name" to store.name,
+                "ownerId" to store.ownerId,
+                "memberIds" to store.memberIds.joinToString(",")
+            )
+        )
+        queue.replaceAndEnqueue(write) { existing ->
+            existing.type == WriteType.STORE_CREATE && existing.storeId == store.id
+        }
+        executeAsync(write)
+    }
 
     fun updateStoreName(storeId: String, newName: String) {
         val write = PendingWrite(
@@ -79,14 +91,14 @@ class PendingWritesManager @Inject constructor(
             storeId = storeId,
             params = mapOf("ingredientId" to ingredientId)
         )
-        // If there is a pending bought toggle for this ingredient it is now irrelevant.
-        val idsToRemove = queue.getAll().filter { existing ->
-            existing.storeId == storeId &&
-                    existing.type == WriteType.INGREDIENT_BOUGHT &&
-                    existing.params["ingredientId"] == ingredientId
-        }
-        idsToRemove.forEach { queue.dequeue(it.id) }
-
+        // Cancel any pending bought toggle for the same ingredient — irrelevant if deleted.
+        queue.getAll()
+            .filter {
+                it.storeId == storeId &&
+                        it.type == WriteType.INGREDIENT_BOUGHT &&
+                        it.params["ingredientId"] == ingredientId
+            }
+            .forEach { queue.dequeue(it.id) }
         queue.replaceAndEnqueue(write) { existing ->
             existing.type == WriteType.INGREDIENT_DELETE &&
                     existing.storeId == storeId &&
@@ -95,24 +107,32 @@ class PendingWritesManager @Inject constructor(
         executeAsync(write)
     }
 
-    // Launches in applicationScope so it outlives the ViewModel.
-    // enqueue() has already committed to disk, so a process kill between
-    // here and dequeue() results in a replay on next launch — not data loss.
+    // ─── Internal ─────────────────────────────────────────────────────────────
+
     private fun executeAsync(write: PendingWrite) {
         applicationScope.launch {
             try {
                 execute(write)
                 queue.dequeue(write.id)
             } catch (e: Exception) {
-                Log.w(tag, "Write ${write.id} failed, queued for replay: ${e.message}")
+                Log.e(tag, "Write ${write.type} ${write.id} failed: ${e.message}", e)
+                // Intentionally not dequeuing — will be replayed on next start.
             }
         }
     }
 
-    // All Firestore writes here use the awaited updateDocument so Firestore's
-    // local SQLite persistence commits before this suspend function returns.
     private suspend fun execute(write: PendingWrite) {
         when (write.type) {
+            WriteType.STORE_CREATE -> {
+                val store = Store(
+                    id = write.storeId,
+                    name = write.params.getValue("name"),
+                    ownerId = write.params.getValue("ownerId"),
+                    memberIds = write.params.getValue("memberIds").split(",")
+                )
+                dataSource.setDocument("stores", write.storeId, store)
+            }
+
             WriteType.STORE_NAME -> {
                 dataSource.updateDocument(
                     collection = "stores",

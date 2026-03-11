@@ -42,6 +42,9 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
+    // Kept in memory to filter cache entries for this user.
+    private var currentUserId: String? = null
+
     init {
         loadStores()
         checkOfflineMode()
@@ -93,18 +96,21 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(isLoading = false, error = "Not logged in")
                 return@launch
             }
+            currentUserId = userId
 
+            // Push Firestore → cache (additive merge only — never removes entries).
+            // WAL name overrides are applied so a pending rename survives restart.
             launch {
                 storeRepository.getStoresForUser(userId).collect { stores ->
                     val corrected = stores.map { store ->
                         val pendingName = pendingWritesManager.queue.getPendingName(store.id)
                         if (pendingName != null) store.copy(name = pendingName) else store
                     }
-                    storeCache.putAll(corrected)
+                    storeCache.merge(corrected)
                 }
             }
 
-            // Pull cache → UI.
+            // Pull cache → UI. Filter to stores the current user is a member of.
             storeCache.flow.collect { cacheMap ->
                 val userStores = cacheMap.values
                     .filter { it.memberIds.contains(userId) }
@@ -148,12 +154,42 @@ class HomeViewModel @Inject constructor(
     fun createStore(name: String) {
         if (name.isBlank()) return
         viewModelScope.launch {
-            val userId = authRepository.getCurrentUserId() ?: return@launch
-            storeRepository.createStore(name, userId)
+            val userId = authRepository.getCurrentUserId()
+            if (userId == null) {
+                _uiState.value = _uiState.value.copy(error = "Not logged in")
+                return@launch
+            }
+            val store = com.zanoni.lardr.data.model.Store(
+                id = java.util.UUID.randomUUID().toString(),
+                name = name,
+                ownerId = userId,
+                memberIds = listOf(userId)
+            )
+            storeCache.put(store)
+            // Fire in applicationScope so the write survives navigation,
+            // but surface any error back to the UI via a shared error channel.
+            applicationScope.launch {
+                try {
+                    storeRepository.createStore(store.name, store.ownerId).let { result ->
+                        if (result is com.zanoni.lardr.data.repository.Result.Error) {
+                            android.util.Log.e("HomeViewModel", "createStore failed: ${result.exception.message}", result.exception)
+                            storeCache.remove(store.id)
+                            _uiState.value = _uiState.value.copy(error = "Failed to create store: ${result.exception.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("HomeViewModel", "createStore exception: ${e.message}", e)
+                    storeCache.remove(store.id)
+                    _uiState.value = _uiState.value.copy(error = "Failed to create store: ${e.message}")
+                }
+            }
         }
     }
 
     fun deleteStore(storeId: String) {
+        // Remove immediately from cache and UI — this is an explicit user action,
+        // not a Firestore snapshot, so it is safe to remove from the cache.
+        storeCache.remove(storeId)
         applicationScope.launch { storeRepository.deleteStore(storeId) }
     }
 

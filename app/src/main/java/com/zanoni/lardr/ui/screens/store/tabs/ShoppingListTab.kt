@@ -14,9 +14,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.zanoni.lardr.data.model.Ingredient
 import com.zanoni.lardr.ui.components.SwipeableIngredientCard
+
+private val FAB_BOTTOM_PADDING = 88.dp
 
 @Composable
 fun ShoppingListTab(
@@ -49,19 +52,20 @@ fun ShoppingListTab(
                 text = "No items yet\nTap + to add ingredients",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
         }
     } else {
         LazyColumn(
             modifier = modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                horizontal = horizontalPadding,
-                vertical = 16.dp
+                start = horizontalPadding,
+                end = horizontalPadding,
+                top = 16.dp,
+                bottom = FAB_BOTTOM_PADDING
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Active items
             items(sortedItems, key = { it.id }) { ingredient ->
                 SwipeableIngredientCard(
                     ingredient = ingredient,
@@ -71,7 +75,6 @@ fun ShoppingListTab(
                 )
             }
 
-            // Bought section separator
             if (sortedBoughtItems.isNotEmpty()) {
                 item {
                     HorizontalDivider(
@@ -79,7 +82,6 @@ fun ShoppingListTab(
                         color = MaterialTheme.colorScheme.outlineVariant
                     )
                 }
-
                 item {
                     Text(
                         text = "Bought",
@@ -90,7 +92,6 @@ fun ShoppingListTab(
                 }
             }
 
-            // Bought items
             items(sortedBoughtItems, key = { it.id }) { ingredient ->
                 SwipeableIngredientCard(
                     ingredient = ingredient,

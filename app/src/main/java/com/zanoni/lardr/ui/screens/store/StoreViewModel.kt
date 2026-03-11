@@ -112,6 +112,7 @@ class StoreViewModel @Inject constructor(
             try {
                 storeRepository.observeStore(storeId).collect { store ->
                     if (store == null) {
+                        storeCache.remove(storeId)
                         if (_uiState.value.isDataLoaded) {
                             _uiState.value = _uiState.value.copy(error = "Store not found.")
                         }
@@ -201,13 +202,14 @@ class StoreViewModel @Inject constructor(
     fun addIngredient(
         name: String,
         quantity: String,
+        isStarred: Boolean,
         periodicity: Int? = null,
         conflictStrategy: ConflictStrategy = ConflictStrategy.ASK
     ) {
         val trimmedName = name.trim()
         val currentList = _uiState.value.shoppingListItems + _uiState.value.boughtItems
 
-        if (periodicity != null) {
+        if (isStarred) {
             val starred = StarredIngredient(
                 id = UUID.randomUUID().toString(),
                 name = trimmedName,
@@ -690,6 +692,30 @@ class StoreViewModel @Inject constructor(
         syncCache()
         applicationScope.launch {
             storeRepository.deleteRecipe(storeId, recipeId, currentRecipes)
+        }
+    }
+
+    fun updateRecipe(
+        recipeId: String,
+        name: String,
+        ingredients: List<Pair<String, String>>,
+        periodicity: Int?
+    ) {
+        val currentRecipes = _uiState.value.recipes
+        val existing = currentRecipes.find { it.id == recipeId } ?: return
+        val updated = existing.copy(
+            name = name,
+            ingredients = ingredients.map { (n, qty) ->
+                RecipeIngredient(name = n, quantity = qty)
+            },
+            periodicity = periodicity
+        )
+        _uiState.value = _uiState.value.copy(
+            recipes = currentRecipes.map { if (it.id == recipeId) updated else it }
+        )
+        syncCache()
+        applicationScope.launch {
+            storeRepository.updateRecipe(storeId, updated, currentRecipes)
         }
     }
 

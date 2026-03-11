@@ -17,8 +17,13 @@ class StoreCache @Inject constructor() {
         _stores.value = _stores.value + (store.id to store)
     }
 
-    fun putAll(stores: List<Store>) {
+    fun merge(stores: List<Store>) {
+        if (stores.isEmpty()) return
         _stores.value = _stores.value + stores.associateBy { it.id }
+    }
+
+    fun remove(storeId: String) {
+        _stores.value = _stores.value - storeId
     }
 
     fun get(storeId: String): Store? = _stores.value[storeId]

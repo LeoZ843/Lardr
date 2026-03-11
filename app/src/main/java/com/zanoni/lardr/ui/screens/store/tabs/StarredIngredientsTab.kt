@@ -17,6 +17,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -28,8 +30,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.zanoni.lardr.data.model.StarredIngredient
+
+private val FAB_BOTTOM_PADDING = 88.dp
 
 @Composable
 fun StarredIngredientsTab(
@@ -62,7 +67,7 @@ fun StarredIngredientsTab(
                 text = "No starred ingredients yet\nStar items from your shopping list",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
         }
     } else {
@@ -70,8 +75,10 @@ fun StarredIngredientsTab(
             columns = GridCells.Fixed(columns),
             modifier = modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                horizontal = horizontalPadding,
-                vertical = 16.dp
+                start = horizontalPadding,
+                end = horizontalPadding,
+                top = 16.dp,
+                bottom = FAB_BOTTOM_PADDING
             ),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -96,9 +103,7 @@ private fun StarredIngredientCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
@@ -117,7 +122,6 @@ private fun StarredIngredientCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
-
                 IconButton(onClick = onEdit) {
                     Icon(
                         imageVector = Icons.Default.Edit,
@@ -142,7 +146,7 @@ private fun StarredIngredientCard(
                 Text(
                     text = "Every ${starredIngredient.periodicity} week${if (starredIngredient.periodicity > 1) "s" else ""}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.tertiary
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -151,16 +155,13 @@ private fun StarredIngredientCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
             ) {
-                androidx.compose.material3.Button(
+                Button(
                     onClick = onAddToList,
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = null
-                    )
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Add to list")
                 }

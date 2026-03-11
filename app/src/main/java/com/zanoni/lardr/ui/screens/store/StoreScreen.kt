@@ -49,6 +49,8 @@ import com.zanoni.lardr.ui.screens.store.tabs.RecipesTab
 import com.zanoni.lardr.ui.screens.store.tabs.ShoppingListTab
 import com.zanoni.lardr.ui.screens.store.tabs.StarredIngredientsTab
 import androidx.compose.material.icons.filled.Share
+import com.zanoni.lardr.data.model.Recipe
+import com.zanoni.lardr.ui.components.EditRecipeDialog
 import com.zanoni.lardr.ui.components.ShareStoreDialog
 
 data class StoreTabItem(
@@ -78,6 +80,8 @@ fun StoreScreen(
     var ingredientToEdit by remember { mutableStateOf<Ingredient?>(null) }
     var showEditStarredDialog by remember { mutableStateOf(false) }
     var starredToEdit by remember { mutableStateOf<StarredIngredient?>(null) }
+    var showEditRecipeDialog by remember { mutableStateOf(false) }
+    var recipeToEdit by remember { mutableStateOf<Recipe?>(null) }
 
     val tabs = listOf(
         StoreTabItem(StoreTab.SHOPPING_LIST, Icons.Default.ShoppingCart, "List"),
@@ -241,13 +245,37 @@ fun StoreScreen(
                         StoreTab.RECIPES -> {
                             RecipesTab(
                                 recipes = uiState.recipes,
-                                onRecipeClick = { },
+                                onEditRecipe = { recipe ->
+                                    recipeToEdit = recipe
+                                    showEditRecipeDialog = true
+                                },
                                 onAddRecipeToList = { viewModel.addRecipeToShoppingList(it) }
                             )
                         }
                     }
                 }
             }
+        }
+
+        if (showEditRecipeDialog && recipeToEdit != null) {
+            val recipe = recipeToEdit!!
+            EditRecipeDialog(
+                recipe = recipe,
+                onDismiss = {
+                    showEditRecipeDialog = false
+                    recipeToEdit = null
+                },
+                onSave = { name, ingredients, periodicity ->
+                    viewModel.updateRecipe(recipe.id, name, ingredients, periodicity)
+                    showEditRecipeDialog = false
+                    recipeToEdit = null
+                },
+                onDelete = {
+                    viewModel.deleteRecipe(recipe.id)
+                    showEditRecipeDialog = false
+                    recipeToEdit = null
+                }
+            )
         }
 
         if (showShareDialog) {
@@ -281,12 +309,8 @@ fun StoreScreen(
         }
 
         if (showAddIngredientDialog) {
-            // Include both active and bought items so the dialog can block true duplicates.
-            // When adding from the Starred tab, also check the full shopping list (not just
-            // starred names) because the ingredient will be added to the list as well.
             val allListNames = (uiState.shoppingListItems + uiState.boughtItems).map { it.name }
             val existingNames = if (addIngredientInitialStarred) {
-                // Starred names + shopping list names: prevent duplicates in both places.
                 (uiState.starredIngredients.map { it.name } + allListNames).distinct()
             } else {
                 allListNames
@@ -297,7 +321,7 @@ fun StoreScreen(
                 existingNames = existingNames,
                 onDismiss = { showAddIngredientDialog = false },
                 onAdd = { name, quantity, periodicity, conflictStrategy ->
-                    viewModel.addIngredient(name, quantity, periodicity, conflictStrategy)
+                    viewModel.addIngredient(name, quantity, addIngredientInitialStarred, periodicity, conflictStrategy)
                     showAddIngredientDialog = false
                 }
             )
